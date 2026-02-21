@@ -1,4 +1,8 @@
- 
+node_modules/
+package.json
+package-lock.json 
+
+
 # Python
 backend/venv/
 backend/__pycache__/
