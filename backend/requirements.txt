@@ -8,3 +8,4 @@ passlib[bcrypt]
 requests
 python-multipart
 python-dotenv
+pydantic-settings
