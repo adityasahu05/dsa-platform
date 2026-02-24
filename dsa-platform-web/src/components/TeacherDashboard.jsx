@@ -5435,7 +5435,7 @@ import axios from 'axios';
 import TestDetailsPage from './TestDetailsPage';
 import QuestionsModal from './QuestionsModal';
 
-const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
+const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/teacher';
 
 const LANGUAGE_OPTIONS = [
   { id: 'python', label: 'Python' },
