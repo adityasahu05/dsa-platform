@@ -1363,7 +1363,7 @@
 // // // // import axios from 'axios';
 // // // // import QuestionsModal from './QuestionsModal';
 
-// // // // const API_URL = 'http://localhost:5000/api/teacher';
+// // // // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // // // function TeacherDashboard() {
 // // // //   const [activeTab, setActiveTab] = useState('tests');
@@ -2034,7 +2034,7 @@
 // // // // import TestDetailsPage from './TestDetailsPage';
 // // // // import QuestionsModal from './QuestionsModal';
 
-// // // // const API_URL = 'http://localhost:5000/api/teacher';
+// // // // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // // // function TeacherDashboard() {
 // // // //   const [selectedTestForDetails, setSelectedTestForDetails] = useState(null);
@@ -2882,7 +2882,7 @@
 // // // import TestDetailsPage from './TestDetailsPage';
 // // // import QuestionsModal from './QuestionsModal';
 
-// // // const API_URL = 'http://localhost:5000/api/teacher';
+// // // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // // function TeacherDashboard() {
 // // //   const [selectedTestForDetails, setSelectedTestForDetails] = useState(null);
@@ -3860,7 +3860,7 @@
 // // import TestDetailsPage from './TestDetailsPage';
 // // import QuestionsModal from './QuestionsModal';
 
-// // const API_URL = 'http://localhost:5000/api/teacher';
+// // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // function TeacherDashboard() {
 // //   const [selectedTestForDetails, setSelectedTestForDetails] = useState(null);
@@ -4943,7 +4943,7 @@
 // import TestDetailsPage from './TestDetailsPage';
 // import QuestionsModal from './QuestionsModal';
 
-// const API_URL = 'http://localhost:5000/api/teacher';
+// const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // const LANGUAGE_OPTIONS = [
 //   { id: 'python', label: 'Python' },
@@ -5435,7 +5435,7 @@ import axios from 'axios';
 import TestDetailsPage from './TestDetailsPage';
 import QuestionsModal from './QuestionsModal';
 
-const API_URL = 'http://localhost:5000/api/teacher';
+const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 const LANGUAGE_OPTIONS = [
   { id: 'python', label: 'Python' },

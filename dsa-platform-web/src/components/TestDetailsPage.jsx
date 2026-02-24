@@ -2,7 +2,7 @@
 // // import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, BarChart3 } from 'lucide-react';
 // // import axios from 'axios';
 
-// // const API_URL = 'http://localhost:5000/api/teacher';
+// // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // function TestDetailsPage({ test, onBack, onAddQuestion }) {
 // //   const [questions, setQuestions] = useState([]);
@@ -533,7 +533,7 @@
 // // import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X } from 'lucide-react';
 // // import axios from 'axios';
 
-// // const API_URL = 'http://localhost:5000/api/teacher';
+// // const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // // function TestDetailsPage({ test, onBack, onAddQuestion }) {
 // //   const [questions, setQuestions] = useState([]);
@@ -1215,7 +1215,7 @@
 // import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X } from 'lucide-react';
 // import axios from 'axios';
 
-// const API_URL = 'http://localhost:5000/api/teacher';
+// const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 // function TestDetailsPage({ test, onBack, onAddQuestion }) {
 //   const [questions, setQuestions] = useState([]);
@@ -1902,7 +1902,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X } from 'lucide-react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/teacher';
+const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 function TestDetailsPage({ test, onBack, onAddQuestion }) {
   const [questions, setQuestions] = useState([]);

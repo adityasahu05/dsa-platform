@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Clock, FileText, Mail } from 'lucide-react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/teacher';
+const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/teacher`;
 
 function StudentTestList({ onSelectTest, onSwitchView }) {
   const [tests, setTests] = useState([]);

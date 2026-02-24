@@ -1,7 +1,7 @@
 // import { useState } from 'react';
 // import axios from 'axios';
 
-// const API_URL = 'http://localhost:5000/api/auth';
+// const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/auth`;
 
 // function AuthPage({ onLogin }) {
 //   const [mode, setMode] = useState('login'); // 'login' | 'register'
@@ -275,7 +275,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/auth';
+const API_URL = `https://dsa-platform-production-64f6.up.railway.app/api/auth`;
 
 function AuthPage({ onLogin }) {
   const [page, setPage] = useState('landing');
