@@ -124,6 +124,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://testslashcoder.netlify.app",
+        "https://thriving-hamster-86353b.netlify.app",
+        "https://test.slashcoder.in",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 # Register routes
 app.include_router(health_router, tags=["Health"])
 app.include_router(execute_router, prefix="/api", tags=["Code Execution"])
