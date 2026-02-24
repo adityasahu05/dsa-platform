@@ -89,6 +89,16 @@ const api = {
     const response = await apiClient.get(`/api/teacher/student/test/${testId}/questions`);
     return response.data;
   },
+  // ── Auth ─────────────────────────────────────────────────────────
+  async login(credentials) {
+    const response = await apiClient.post('/api/auth/login', credentials);
+    return response.data;
+},
+
+  async register(userData) {
+    const response = await apiClient.post('/api/auth/register', userData);
+    return response.data;
+},
 };
 
 export default api;
