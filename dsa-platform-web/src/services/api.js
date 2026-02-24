@@ -10,7 +10,7 @@ axios.interceptors.request.use((config) => {
 });
 
 // Backend API base URL
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL = 'https://dsa-platform-production-64f6.up.railway.app';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -22,9 +22,7 @@ const apiClient = axios.create({
 // ✅ Attach JWT to apiClient requests too
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
