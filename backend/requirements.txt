@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-sqlalchemy
-psycopg2-binary
 pydantic
 python-jose[cryptography]
 passlib[bcrypt]
@@ -10,3 +8,4 @@ python-multipart
 python-dotenv
 pydantic-settings
 PyJWT
+firebase-admin
