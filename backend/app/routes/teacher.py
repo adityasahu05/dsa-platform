@@ -2031,21 +2031,431 @@
 
 
 
+# """
+# Teacher Routes
+# API endpoints for teacher operations
+# """
+
+# from fastapi import APIRouter, HTTPException, Depends, status
+# from sqlalchemy.orm import Session
+# from typing import List, Optional
+# from app.database import get_db
+# from app.models.db_models import Test, Question, TestCase, Submission, User
+# from app.routes.auth import require_teacher, get_current_user
+# from pydantic import BaseModel
+# from datetime import datetime
+# import random
+# import string
+
+# router = APIRouter(prefix="/api/teacher", tags=["teacher"])
+
+# ALL_LANGUAGES = ["python", "c", "cpp", "java"]
+
+
+# # ─── Pydantic Models ──────────────────────────────────────────────────────────
+
+# class TestCreate(BaseModel):
+#     title: str
+#     description: str
+#     duration_minutes: int = 60
+#     is_active: bool = True
+#     allowed_languages: List[str] = ["python", "c", "cpp", "java"]
+#     start_date: Optional[str] = None
+#     end_date: Optional[str] = None
+#     test_type: str = "invite_only"
+#     tags: Optional[str] = ""
+
+
+# class TestResponse(BaseModel):
+#     id: int
+#     title: str
+#     description: str
+#     teacher_id: int
+#     duration_minutes: int
+#     is_active: bool
+#     allowed_languages: str
+#     created_at: datetime
+
+#     class Config:
+#         from_attributes = True
+
+
+# class QuestionCreate(BaseModel):
+#     test_id: int
+#     title: str
+#     description: str
+#     difficulty: str
+#     topic: str
+#     points: int = 10
+#     time_limit_ms: int = 2000
+
+
+# class QuestionUpdate(BaseModel):
+#     title: Optional[str] = None
+#     description: Optional[str] = None
+#     difficulty: Optional[str] = None
+#     topic: Optional[str] = None
+#     points: Optional[int] = None
+#     time_limit_ms: Optional[int] = None
+
+
+# class TestCaseCreate(BaseModel):
+#     question_id: int
+#     input: str
+#     expected_output: str
+#     is_hidden: bool = False
+#     points: int = 1
+
+
+# class TestCaseUpdate(BaseModel):
+#     input: Optional[str] = None
+#     expected_output: Optional[str] = None
+#     is_hidden: Optional[bool] = None
+#     points: Optional[int] = None
+
+
+# class TestCaseResponse(BaseModel):
+#     id: int
+#     question_id: int
+#     input: str
+#     expected_output: str
+#     is_hidden: bool
+#     points: int
+
+#     class Config:
+#         from_attributes = True
+
+
+# class QuestionResponse(BaseModel):
+#     id: int
+#     test_id: int
+#     title: str
+#     description: str
+#     difficulty: str
+#     topic: str
+#     points: int
+#     time_limit_ms: int
+#     created_at: datetime
+#     test_cases: List[TestCaseResponse] = []
+
+#     class Config:
+#         from_attributes = True
+
+
+# class TestUpdate(BaseModel):
+#     is_active: Optional[bool] = None
+#     start_date: Optional[str] = None
+#     end_date: Optional[str] = None
+#     test_type: Optional[str] = None
+#     tags: Optional[str] = None
+#     title: Optional[str] = None
+#     description: Optional[str] = None
+#     duration_minutes: Optional[int] = None
+
+
+# class SubmitRequest(BaseModel):
+#     question_id: int
+#     test_id: int
+#     language: str
+#     code: str
+#     score: float
+#     passed: int
+#     total: int
+
+
+# # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+# def safe_difficulty(q) -> str:
+#     return q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty
+
+# def parse_languages(lang_str: str) -> List[str]:
+#     return [l.strip() for l in (lang_str or "python").split(",") if l.strip()]
+
+# def format_languages(langs: List[str]) -> str:
+#     valid = [l.lower() for l in langs if l.lower() in ALL_LANGUAGES]
+#     return ",".join(valid) if valid else "python"
+
+# def generate_assessment_id() -> str:
+#     return ''.join(random.choices(string.digits, k=7))
+
+# def parse_date(date_str: Optional[str]):
+#     if not date_str:
+#         return None
+#     try:
+#         return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+#     except Exception:
+#         return None
+
+# def format_test(test) -> dict:
+#     return {
+#         "id": test.id,
+#         "title": test.title,
+#         "description": test.description,
+#         "teacher_id": test.teacher_id,
+#         "duration_minutes": test.duration_minutes,
+#         "is_active": test.is_active,
+#         "allowed_languages": parse_languages(test.allowed_languages or "python"),
+#         "start_date": test.start_date.isoformat() if test.start_date else None,
+#         "end_date": test.end_date.isoformat() if test.end_date else None,
+#         "test_type": test.test_type or "invite_only",
+#         "tags": [t.strip() for t in (test.tags or "").split(",") if t.strip()],
+#         "assessment_id": test.assessment_id or "",
+#         "created_at": test.created_at,
+#     }
+
+
+# # ─── Teacher Routes ───────────────────────────────────────────────────────────
+
+# @router.get("/tests")
+# def get_all_tests(db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
+#     tests = db.query(Test).filter(Test.teacher_id == current_user.id).all()
+#     return [format_test(t) for t in tests]
+
+
+# @router.post("/tests")
+# def create_test(test: TestCreate, db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
+#     new_test = Test(
+#         title=test.title,
+#         description=test.description,
+#         teacher_id=current_user.id,
+#         duration_minutes=test.duration_minutes,
+#         is_active=test.is_active,
+#         allowed_languages=format_languages(test.allowed_languages),
+#         start_date=parse_date(test.start_date),
+#         end_date=parse_date(test.end_date),
+#         test_type=test.test_type or "invite_only",
+#         tags=test.tags or "",
+#         assessment_id=generate_assessment_id(),
+#     )
+#     db.add(new_test)
+#     db.commit()
+#     db.refresh(new_test)
+#     return format_test(new_test)
+
+
+# @router.patch("/tests/{test_id}")
+# def update_test(test_id: int, data: TestUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
+#     test = db.query(Test).filter(Test.id == test_id, Test.teacher_id == current_user.id).first()
+#     if not test:
+#         raise HTTPException(status_code=404, detail="Test not found")
+#     if data.is_active is not None: test.is_active = data.is_active
+#     if data.start_date is not None: test.start_date = parse_date(data.start_date)
+#     if data.end_date is not None: test.end_date = parse_date(data.end_date)
+#     if data.test_type is not None: test.test_type = data.test_type
+#     if data.tags is not None: test.tags = data.tags
+#     if data.title is not None: test.title = data.title
+#     if data.description is not None: test.description = data.description
+#     if data.duration_minutes is not None: test.duration_minutes = data.duration_minutes
+#     db.commit()
+#     db.refresh(test)
+#     return format_test(test)
+
+
+# @router.get("/tests/{test_id}/questions", response_model=List[QuestionResponse])
+# def get_test_questions_detailed(test_id: int, db: Session = Depends(get_db)):
+#     test = db.query(Test).filter(Test.id == test_id).first()
+#     if not test:
+#         raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+#     return db.query(Question).filter(Question.test_id == test_id).all()
+
+
+# @router.get("/test/{test_id}/questions")
+# def get_test_questions(test_id: int, db: Session = Depends(get_db)):
+#     questions = db.query(Question).filter(Question.test_id == test_id).all()
+#     result = []
+#     for question in questions:
+#         test_cases = db.query(TestCase).filter(TestCase.question_id == question.id).all()
+#         result.append({
+#             "id": question.id, "title": question.title, "description": question.description,
+#             "difficulty": safe_difficulty(question), "topic": question.topic,
+#             "points": question.points, "time_limit_ms": question.time_limit_ms,
+#             "test_cases_count": len(test_cases),
+#             "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
+#                             "is_hidden": tc.is_hidden, "points": tc.points} for tc in test_cases]
+#         })
+#     return result
+
+
+# @router.post("/questions")
+# def create_question(question: QuestionCreate, db: Session = Depends(get_db)):
+#     new_question = Question(
+#         test_id=question.test_id, title=question.title, description=question.description,
+#         difficulty=question.difficulty.upper(), topic=question.topic.upper(),
+#         points=question.points, time_limit_ms=question.time_limit_ms
+#     )
+#     db.add(new_question)
+#     db.commit()
+#     db.refresh(new_question)
+#     return new_question
+
+
+# @router.put("/questions/{question_id}")
+# def update_question(question_id: int, question_data: QuestionUpdate, db: Session = Depends(get_db)):
+#     question = db.query(Question).filter(Question.id == question_id).first()
+#     if not question:
+#         raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
+#     if question_data.title is not None: question.title = question_data.title
+#     if question_data.description is not None: question.description = question_data.description
+#     if question_data.difficulty is not None: question.difficulty = question_data.difficulty.upper()
+#     if question_data.topic is not None: question.topic = question_data.topic.upper()
+#     if question_data.points is not None: question.points = question_data.points
+#     if question_data.time_limit_ms is not None: question.time_limit_ms = question_data.time_limit_ms
+#     db.commit()
+#     db.refresh(question)
+#     test_cases = db.query(TestCase).filter(TestCase.question_id == question.id).all()
+#     return {
+#         "id": question.id, "title": question.title, "description": question.description,
+#         "difficulty": safe_difficulty(question), "topic": question.topic,
+#         "points": question.points, "time_limit_ms": question.time_limit_ms,
+#         "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
+#                         "is_hidden": tc.is_hidden, "points": tc.points} for tc in test_cases]
+#     }
+
+
+# @router.delete("/questions/{question_id}")
+# def delete_question(question_id: int, db: Session = Depends(get_db)):
+#     question = db.query(Question).filter(Question.id == question_id).first()
+#     if not question:
+#         raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
+#     db.query(TestCase).filter(TestCase.question_id == question_id).delete()
+#     db.query(Submission).filter(Submission.question_id == question_id).delete()
+#     db.delete(question)
+#     db.commit()
+#     return {"message": f"Question {question_id} deleted successfully"}
+
+
+# @router.post("/test-cases")
+# def create_test_case(test_case: TestCaseCreate, db: Session = Depends(get_db)):
+#     new_tc = TestCase(
+#         question_id=test_case.question_id, input=test_case.input,
+#         expected_output=test_case.expected_output, is_hidden=test_case.is_hidden,
+#         points=test_case.points
+#     )
+#     db.add(new_tc)
+#     db.commit()
+#     db.refresh(new_tc)
+#     return new_tc
+
+
+# @router.put("/test-cases/{test_case_id}")
+# def update_test_case(test_case_id: int, data: TestCaseUpdate, db: Session = Depends(get_db)):
+#     tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
+#     if not tc:
+#         raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
+#     if data.input is not None: tc.input = data.input
+#     if data.expected_output is not None: tc.expected_output = data.expected_output
+#     if data.is_hidden is not None: tc.is_hidden = data.is_hidden
+#     if data.points is not None: tc.points = data.points
+#     db.commit()
+#     db.refresh(tc)
+#     return {"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
+#             "is_hidden": tc.is_hidden, "points": tc.points}
+
+
+# @router.delete("/test-cases/{test_case_id}")
+# def delete_test_case(test_case_id: int, db: Session = Depends(get_db)):
+#     tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
+#     if not tc:
+#         raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
+#     db.delete(tc)
+#     db.commit()
+#     return {"message": f"Test case {test_case_id} deleted successfully"}
+
+
+# @router.get("/submissions")
+# def get_all_submissions(db: Session = Depends(get_db), limit: int = 50):
+#     submissions = db.query(Submission).order_by(Submission.submitted_at.desc()).limit(limit).all()
+#     return submissions
+
+
+# @router.get("/analytics/test/{test_id}")
+# def get_test_analytics(test_id: int, db: Session = Depends(get_db)):
+#     questions = db.query(Question).filter(Question.test_id == test_id).all()
+#     analytics = {"test_id": test_id, "total_questions": len(questions), "questions": []}
+#     for question in questions:
+#         submissions = db.query(Submission).filter(Submission.question_id == question.id).all()
+#         total = len(submissions)
+#         passed = sum(1 for s in submissions if s.score == 100)
+#         avg = sum(s.score for s in submissions) / total if total > 0 else 0
+#         analytics["questions"].append({
+#             "question_id": question.id, "title": question.title,
+#             "total_submissions": total, "passed": passed, "failed": total - passed,
+#             "pass_rate": (passed / total * 100) if total > 0 else 0,
+#             "average_score": round(avg, 2)
+#         })
+#     return analytics
+
+
+# # ─── Student Routes ───────────────────────────────────────────────────────────
+
+# @router.get("/student/tests", tags=["student"])
+# def get_available_tests(db: Session = Depends(get_db)):
+#     tests = db.query(Test).filter(Test.is_active == True).all()
+#     result = []
+#     for test in tests:
+#         question_count = db.query(Question).filter(Question.test_id == test.id).count()
+#         result.append({
+#             "id": test.id, "title": test.title, "description": test.description,
+#             "duration_minutes": test.duration_minutes, "question_count": question_count,
+#             "allowed_languages": parse_languages(test.allowed_languages or "python"),
+#             "created_at": test.created_at
+#         })
+#     return result
+
+
+# @router.get("/student/test/{test_id}/questions", tags=["student"])
+# def get_test_questions_for_student(test_id: int, db: Session = Depends(get_db)):
+#     test = db.query(Test).filter(Test.id == test_id).first()
+#     if not test:
+#         raise HTTPException(status_code=404, detail="Test not found")
+#     questions = db.query(Question).filter(Question.test_id == test_id).all()
+#     result = []
+#     for question in questions:
+#         test_cases = db.query(TestCase).filter(
+#             TestCase.question_id == question.id, TestCase.is_hidden == False
+#         ).all()
+#         result.append({
+#             "id": question.id, "title": question.title, "description": question.description,
+#             "difficulty": safe_difficulty(question), "topic": question.topic,
+#             "points": question.points, "time_limit_ms": question.time_limit_ms,
+#             "allowed_languages": parse_languages(test.allowed_languages or "python"),
+#             "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
+#                             "points": tc.points} for tc in test_cases]
+#         })
+#     return result
+
+
+# @router.post("/student/submit", tags=["student"])
+# def submit_solution(data: SubmitRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+#     question = db.query(Question).filter(Question.id == data.question_id).first()
+#     if not question:
+#         raise HTTPException(status_code=404, detail="Question not found")
+#     submission = Submission(
+#         student_id=current_user.id, question_id=data.question_id,
+#         language=data.language, code=data.code, score=data.score,
+#         submitted_at=datetime.utcnow()
+#     )
+#     db.add(submission)
+#     db.commit()
+#     db.refresh(submission)
+#     return {"message": "Submitted successfully", "submission_id": submission.id, "score": data.score}
+
+
+
 """
 Teacher Routes
-API endpoints for teacher operations
+API endpoints for teacher operations — Firebase Realtime Database
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
-from app.database import get_db
-from app.models.db_models import Test, Question, TestCase, Submission, User
-from app.routes.auth import require_teacher, get_current_user
 from pydantic import BaseModel
 from datetime import datetime
+from firebase_admin import db
+from app.routes.auth import require_teacher, get_current_user
 import random
 import string
+import uuid
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
@@ -2066,22 +2476,19 @@ class TestCreate(BaseModel):
     tags: Optional[str] = ""
 
 
-class TestResponse(BaseModel):
-    id: int
-    title: str
-    description: str
-    teacher_id: int
-    duration_minutes: int
-    is_active: bool
-    allowed_languages: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+class TestUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    test_type: Optional[str] = None
+    tags: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    duration_minutes: Optional[int] = None
 
 
 class QuestionCreate(BaseModel):
-    test_id: int
+    test_id: str
     title: str
     description: str
     difficulty: str
@@ -2100,7 +2507,7 @@ class QuestionUpdate(BaseModel):
 
 
 class TestCaseCreate(BaseModel):
-    question_id: int
+    question_id: str
     input: str
     expected_output: str
     is_hidden: bool = False
@@ -2114,48 +2521,9 @@ class TestCaseUpdate(BaseModel):
     points: Optional[int] = None
 
 
-class TestCaseResponse(BaseModel):
-    id: int
-    question_id: int
-    input: str
-    expected_output: str
-    is_hidden: bool
-    points: int
-
-    class Config:
-        from_attributes = True
-
-
-class QuestionResponse(BaseModel):
-    id: int
-    test_id: int
-    title: str
-    description: str
-    difficulty: str
-    topic: str
-    points: int
-    time_limit_ms: int
-    created_at: datetime
-    test_cases: List[TestCaseResponse] = []
-
-    class Config:
-        from_attributes = True
-
-
-class TestUpdate(BaseModel):
-    is_active: Optional[bool] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    test_type: Optional[str] = None
-    tags: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
-    duration_minutes: Optional[int] = None
-
-
 class SubmitRequest(BaseModel):
-    question_id: int
-    test_id: int
+    question_id: str
+    test_id: str
     language: str
     code: str
     score: float
@@ -2164,9 +2532,6 @@ class SubmitRequest(BaseModel):
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-
-def safe_difficulty(q) -> str:
-    return q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty
 
 def parse_languages(lang_str: str) -> List[str]:
     return [l.strip() for l in (lang_str or "python").split(",") if l.strip()]
@@ -2182,203 +2547,223 @@ def parse_date(date_str: Optional[str]):
     if not date_str:
         return None
     try:
-        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00')).isoformat()
     except Exception:
         return None
 
-def format_test(test) -> dict:
+def format_test(test_id: str, test: dict) -> dict:
     return {
-        "id": test.id,
-        "title": test.title,
-        "description": test.description,
-        "teacher_id": test.teacher_id,
-        "duration_minutes": test.duration_minutes,
-        "is_active": test.is_active,
-        "allowed_languages": parse_languages(test.allowed_languages or "python"),
-        "start_date": test.start_date.isoformat() if test.start_date else None,
-        "end_date": test.end_date.isoformat() if test.end_date else None,
-        "test_type": test.test_type or "invite_only",
-        "tags": [t.strip() for t in (test.tags or "").split(",") if t.strip()],
-        "assessment_id": test.assessment_id or "",
-        "created_at": test.created_at,
+        "id": test_id,
+        "title": test.get("title"),
+        "description": test.get("description"),
+        "teacher_id": test.get("teacher_id"),
+        "duration_minutes": test.get("duration_minutes", 60),
+        "is_active": test.get("is_active", True),
+        "allowed_languages": parse_languages(test.get("allowed_languages", "python")),
+        "start_date": test.get("start_date"),
+        "end_date": test.get("end_date"),
+        "test_type": test.get("test_type", "invite_only"),
+        "tags": [t.strip() for t in (test.get("tags") or "").split(",") if t.strip()],
+        "assessment_id": test.get("assessment_id", ""),
+        "created_at": test.get("created_at"),
     }
 
 
 # ─── Teacher Routes ───────────────────────────────────────────────────────────
 
 @router.get("/tests")
-def get_all_tests(db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
-    tests = db.query(Test).filter(Test.teacher_id == current_user.id).all()
-    return [format_test(t) for t in tests]
+def get_all_tests(current_user: dict = Depends(require_teacher)):
+    all_tests = db.reference("/tests").get() or {}
+    return [
+        format_test(tid, t)
+        for tid, t in all_tests.items()
+        if t.get("teacher_id") == current_user["id"]
+    ]
 
 
 @router.post("/tests")
-def create_test(test: TestCreate, db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
-    new_test = Test(
-        title=test.title,
-        description=test.description,
-        teacher_id=current_user.id,
-        duration_minutes=test.duration_minutes,
-        is_active=test.is_active,
-        allowed_languages=format_languages(test.allowed_languages),
-        start_date=parse_date(test.start_date),
-        end_date=parse_date(test.end_date),
-        test_type=test.test_type or "invite_only",
-        tags=test.tags or "",
-        assessment_id=generate_assessment_id(),
-    )
-    db.add(new_test)
-    db.commit()
-    db.refresh(new_test)
-    return format_test(new_test)
+def create_test(test: TestCreate, current_user: dict = Depends(require_teacher)):
+    test_id = str(uuid.uuid4())
+    test_data = {
+        "title": test.title,
+        "description": test.description,
+        "teacher_id": current_user["id"],
+        "duration_minutes": test.duration_minutes,
+        "is_active": test.is_active,
+        "allowed_languages": format_languages(test.allowed_languages),
+        "start_date": parse_date(test.start_date),
+        "end_date": parse_date(test.end_date),
+        "test_type": test.test_type or "invite_only",
+        "tags": test.tags or "",
+        "assessment_id": generate_assessment_id(),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    db.reference(f"/tests/{test_id}").set(test_data)
+    return format_test(test_id, test_data)
 
 
 @router.patch("/tests/{test_id}")
-def update_test(test_id: int, data: TestUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_teacher)):
-    test = db.query(Test).filter(Test.id == test_id, Test.teacher_id == current_user.id).first()
-    if not test:
+def update_test(test_id: str, data: TestUpdate, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
         raise HTTPException(status_code=404, detail="Test not found")
-    if data.is_active is not None: test.is_active = data.is_active
-    if data.start_date is not None: test.start_date = parse_date(data.start_date)
-    if data.end_date is not None: test.end_date = parse_date(data.end_date)
-    if data.test_type is not None: test.test_type = data.test_type
-    if data.tags is not None: test.tags = data.tags
-    if data.title is not None: test.title = data.title
-    if data.description is not None: test.description = data.description
-    if data.duration_minutes is not None: test.duration_minutes = data.duration_minutes
-    db.commit()
-    db.refresh(test)
-    return format_test(test)
-
-
-@router.get("/tests/{test_id}/questions", response_model=List[QuestionResponse])
-def get_test_questions_detailed(test_id: int, db: Session = Depends(get_db)):
-    test = db.query(Test).filter(Test.id == test_id).first()
-    if not test:
-        raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
-    return db.query(Question).filter(Question.test_id == test_id).all()
+    updates = {}
+    if data.is_active is not None: updates["is_active"] = data.is_active
+    if data.start_date is not None: updates["start_date"] = parse_date(data.start_date)
+    if data.end_date is not None: updates["end_date"] = parse_date(data.end_date)
+    if data.test_type is not None: updates["test_type"] = data.test_type
+    if data.tags is not None: updates["tags"] = data.tags
+    if data.title is not None: updates["title"] = data.title
+    if data.description is not None: updates["description"] = data.description
+    if data.duration_minutes is not None: updates["duration_minutes"] = data.duration_minutes
+    test_ref.update(updates)
+    updated = test_ref.get()
+    return format_test(test_id, updated)
 
 
 @router.get("/test/{test_id}/questions")
-def get_test_questions(test_id: int, db: Session = Depends(get_db)):
-    questions = db.query(Question).filter(Question.test_id == test_id).all()
+def get_test_questions(test_id: str):
+    all_questions = db.reference("/questions").get() or {}
     result = []
-    for question in questions:
-        test_cases = db.query(TestCase).filter(TestCase.question_id == question.id).all()
-        result.append({
-            "id": question.id, "title": question.title, "description": question.description,
-            "difficulty": safe_difficulty(question), "topic": question.topic,
-            "points": question.points, "time_limit_ms": question.time_limit_ms,
-            "test_cases_count": len(test_cases),
-            "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
-                            "is_hidden": tc.is_hidden, "points": tc.points} for tc in test_cases]
-        })
+    for qid, q in all_questions.items():
+        if q.get("test_id") == test_id:
+            all_tcs = db.reference("/test_cases").get() or {}
+            test_cases = [
+                {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
+                 "is_hidden": tc.get("is_hidden", False), "points": tc.get("points", 1)}
+                for tcid, tc in all_tcs.items() if tc.get("question_id") == qid
+            ]
+            result.append({
+                "id": qid, "title": q.get("title"), "description": q.get("description"),
+                "difficulty": q.get("difficulty"), "topic": q.get("topic"),
+                "points": q.get("points", 10), "time_limit_ms": q.get("time_limit_ms", 2000),
+                "test_cases_count": len(test_cases), "test_cases": test_cases
+            })
     return result
 
 
 @router.post("/questions")
-def create_question(question: QuestionCreate, db: Session = Depends(get_db)):
-    new_question = Question(
-        test_id=question.test_id, title=question.title, description=question.description,
-        difficulty=question.difficulty.upper(), topic=question.topic.upper(),
-        points=question.points, time_limit_ms=question.time_limit_ms
-    )
-    db.add(new_question)
-    db.commit()
-    db.refresh(new_question)
-    return new_question
+def create_question(question: QuestionCreate):
+    qid = str(uuid.uuid4())
+    q_data = {
+        "test_id": question.test_id,
+        "title": question.title,
+        "description": question.description,
+        "difficulty": question.difficulty.upper(),
+        "topic": question.topic.upper(),
+        "points": question.points,
+        "time_limit_ms": question.time_limit_ms,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    db.reference(f"/questions/{qid}").set(q_data)
+    q_data["id"] = qid
+    return q_data
 
 
 @router.put("/questions/{question_id}")
-def update_question(question_id: int, question_data: QuestionUpdate, db: Session = Depends(get_db)):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
+def update_question(question_id: str, question_data: QuestionUpdate):
+    q_ref = db.reference(f"/questions/{question_id}")
+    q = q_ref.get()
+    if not q:
         raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
-    if question_data.title is not None: question.title = question_data.title
-    if question_data.description is not None: question.description = question_data.description
-    if question_data.difficulty is not None: question.difficulty = question_data.difficulty.upper()
-    if question_data.topic is not None: question.topic = question_data.topic.upper()
-    if question_data.points is not None: question.points = question_data.points
-    if question_data.time_limit_ms is not None: question.time_limit_ms = question_data.time_limit_ms
-    db.commit()
-    db.refresh(question)
-    test_cases = db.query(TestCase).filter(TestCase.question_id == question.id).all()
-    return {
-        "id": question.id, "title": question.title, "description": question.description,
-        "difficulty": safe_difficulty(question), "topic": question.topic,
-        "points": question.points, "time_limit_ms": question.time_limit_ms,
-        "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
-                        "is_hidden": tc.is_hidden, "points": tc.points} for tc in test_cases]
-    }
+    updates = {}
+    if question_data.title is not None: updates["title"] = question_data.title
+    if question_data.description is not None: updates["description"] = question_data.description
+    if question_data.difficulty is not None: updates["difficulty"] = question_data.difficulty.upper()
+    if question_data.topic is not None: updates["topic"] = question_data.topic.upper()
+    if question_data.points is not None: updates["points"] = question_data.points
+    if question_data.time_limit_ms is not None: updates["time_limit_ms"] = question_data.time_limit_ms
+    q_ref.update(updates)
+    updated = q_ref.get()
+    all_tcs = db.reference("/test_cases").get() or {}
+    test_cases = [
+        {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
+         "is_hidden": tc.get("is_hidden", False), "points": tc.get("points", 1)}
+        for tcid, tc in all_tcs.items() if tc.get("question_id") == question_id
+    ]
+    updated["id"] = question_id
+    updated["test_cases"] = test_cases
+    return updated
 
 
 @router.delete("/questions/{question_id}")
-def delete_question(question_id: int, db: Session = Depends(get_db)):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
+def delete_question(question_id: str):
+    if not db.reference(f"/questions/{question_id}").get():
         raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
-    db.query(TestCase).filter(TestCase.question_id == question_id).delete()
-    db.query(Submission).filter(Submission.question_id == question_id).delete()
-    db.delete(question)
-    db.commit()
+    db.reference(f"/questions/{question_id}").delete()
+    # Delete related test cases and submissions
+    all_tcs = db.reference("/test_cases").get() or {}
+    for tcid, tc in all_tcs.items():
+        if tc.get("question_id") == question_id:
+            db.reference(f"/test_cases/{tcid}").delete()
+    all_subs = db.reference("/submissions").get() or {}
+    for sid, s in all_subs.items():
+        if s.get("question_id") == question_id:
+            db.reference(f"/submissions/{sid}").delete()
     return {"message": f"Question {question_id} deleted successfully"}
 
 
 @router.post("/test-cases")
-def create_test_case(test_case: TestCaseCreate, db: Session = Depends(get_db)):
-    new_tc = TestCase(
-        question_id=test_case.question_id, input=test_case.input,
-        expected_output=test_case.expected_output, is_hidden=test_case.is_hidden,
-        points=test_case.points
-    )
-    db.add(new_tc)
-    db.commit()
-    db.refresh(new_tc)
-    return new_tc
+def create_test_case(test_case: TestCaseCreate):
+    tcid = str(uuid.uuid4())
+    tc_data = {
+        "question_id": test_case.question_id,
+        "input": test_case.input,
+        "expected_output": test_case.expected_output,
+        "is_hidden": test_case.is_hidden,
+        "points": test_case.points,
+    }
+    db.reference(f"/test_cases/{tcid}").set(tc_data)
+    tc_data["id"] = tcid
+    return tc_data
 
 
 @router.put("/test-cases/{test_case_id}")
-def update_test_case(test_case_id: int, data: TestCaseUpdate, db: Session = Depends(get_db)):
-    tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
+def update_test_case(test_case_id: str, data: TestCaseUpdate):
+    tc_ref = db.reference(f"/test_cases/{test_case_id}")
+    tc = tc_ref.get()
     if not tc:
         raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
-    if data.input is not None: tc.input = data.input
-    if data.expected_output is not None: tc.expected_output = data.expected_output
-    if data.is_hidden is not None: tc.is_hidden = data.is_hidden
-    if data.points is not None: tc.points = data.points
-    db.commit()
-    db.refresh(tc)
-    return {"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
-            "is_hidden": tc.is_hidden, "points": tc.points}
+    updates = {}
+    if data.input is not None: updates["input"] = data.input
+    if data.expected_output is not None: updates["expected_output"] = data.expected_output
+    if data.is_hidden is not None: updates["is_hidden"] = data.is_hidden
+    if data.points is not None: updates["points"] = data.points
+    tc_ref.update(updates)
+    updated = tc_ref.get()
+    updated["id"] = test_case_id
+    return updated
 
 
 @router.delete("/test-cases/{test_case_id}")
-def delete_test_case(test_case_id: int, db: Session = Depends(get_db)):
-    tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
-    if not tc:
+def delete_test_case(test_case_id: str):
+    if not db.reference(f"/test_cases/{test_case_id}").get():
         raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
-    db.delete(tc)
-    db.commit()
+    db.reference(f"/test_cases/{test_case_id}").delete()
     return {"message": f"Test case {test_case_id} deleted successfully"}
 
 
 @router.get("/submissions")
-def get_all_submissions(db: Session = Depends(get_db), limit: int = 50):
-    submissions = db.query(Submission).order_by(Submission.submitted_at.desc()).limit(limit).all()
-    return submissions
+def get_all_submissions(limit: int = 50):
+    all_subs = db.reference("/submissions").get() or {}
+    subs = sorted(all_subs.values(), key=lambda x: x.get("submitted_at", ""), reverse=True)
+    return subs[:limit]
 
 
 @router.get("/analytics/test/{test_id}")
-def get_test_analytics(test_id: int, db: Session = Depends(get_db)):
-    questions = db.query(Question).filter(Question.test_id == test_id).all()
+def get_test_analytics(test_id: str):
+    all_questions = db.reference("/questions").get() or {}
+    questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
+    all_subs = db.reference("/submissions").get() or {}
     analytics = {"test_id": test_id, "total_questions": len(questions), "questions": []}
-    for question in questions:
-        submissions = db.query(Submission).filter(Submission.question_id == question.id).all()
-        total = len(submissions)
-        passed = sum(1 for s in submissions if s.score == 100)
-        avg = sum(s.score for s in submissions) / total if total > 0 else 0
+    for qid, q in questions.items():
+        subs = [s for s in all_subs.values() if s.get("question_id") == qid]
+        total = len(subs)
+        passed = sum(1 for s in subs if s.get("score") == 100)
+        avg = sum(s.get("score", 0) for s in subs) / total if total > 0 else 0
         analytics["questions"].append({
-            "question_id": question.id, "title": question.title,
+            "question_id": qid, "title": q.get("title"),
             "total_submissions": total, "passed": passed, "failed": total - passed,
             "pass_rate": (passed / total * 100) if total > 0 else 0,
             "average_score": round(avg, 2)
@@ -2389,53 +2774,65 @@ def get_test_analytics(test_id: int, db: Session = Depends(get_db)):
 # ─── Student Routes ───────────────────────────────────────────────────────────
 
 @router.get("/student/tests", tags=["student"])
-def get_available_tests(db: Session = Depends(get_db)):
-    tests = db.query(Test).filter(Test.is_active == True).all()
+def get_available_tests():
+    all_tests = db.reference("/tests").get() or {}
+    all_questions = db.reference("/questions").get() or {}
     result = []
-    for test in tests:
-        question_count = db.query(Question).filter(Question.test_id == test.id).count()
-        result.append({
-            "id": test.id, "title": test.title, "description": test.description,
-            "duration_minutes": test.duration_minutes, "question_count": question_count,
-            "allowed_languages": parse_languages(test.allowed_languages or "python"),
-            "created_at": test.created_at
-        })
+    for tid, t in all_tests.items():
+        if t.get("is_active"):
+            q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
+            result.append({
+                "id": tid, "title": t.get("title"), "description": t.get("description"),
+                "duration_minutes": t.get("duration_minutes", 60),
+                "question_count": q_count,
+                "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
+                "created_at": t.get("created_at")
+            })
     return result
 
 
 @router.get("/student/test/{test_id}/questions", tags=["student"])
-def get_test_questions_for_student(test_id: int, db: Session = Depends(get_db)):
-    test = db.query(Test).filter(Test.id == test_id).first()
+def get_test_questions_for_student(test_id: str):
+    test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
-    questions = db.query(Question).filter(Question.test_id == test_id).all()
+    all_questions = db.reference("/questions").get() or {}
+    all_tcs = db.reference("/test_cases").get() or {}
     result = []
-    for question in questions:
-        test_cases = db.query(TestCase).filter(
-            TestCase.question_id == question.id, TestCase.is_hidden == False
-        ).all()
-        result.append({
-            "id": question.id, "title": question.title, "description": question.description,
-            "difficulty": safe_difficulty(question), "topic": question.topic,
-            "points": question.points, "time_limit_ms": question.time_limit_ms,
-            "allowed_languages": parse_languages(test.allowed_languages or "python"),
-            "test_cases": [{"id": tc.id, "input": tc.input, "expected_output": tc.expected_output,
-                            "points": tc.points} for tc in test_cases]
-        })
+    for qid, q in all_questions.items():
+        if q.get("test_id") == test_id:
+            test_cases = [
+                {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
+                 "points": tc.get("points", 1)}
+                for tcid, tc in all_tcs.items()
+                if tc.get("question_id") == qid and not tc.get("is_hidden", False)
+            ]
+            result.append({
+                "id": qid, "title": q.get("title"), "description": q.get("description"),
+                "difficulty": q.get("difficulty"), "topic": q.get("topic"),
+                "points": q.get("points", 10), "time_limit_ms": q.get("time_limit_ms", 2000),
+                "allowed_languages": parse_languages(test.get("allowed_languages", "python")),
+                "test_cases": test_cases
+            })
     return result
 
 
 @router.post("/student/submit", tags=["student"])
-def submit_solution(data: SubmitRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    question = db.query(Question).filter(Question.id == data.question_id).first()
+def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_current_user)):
+    question = db.reference(f"/questions/{data.question_id}").get()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
-    submission = Submission(
-        student_id=current_user.id, question_id=data.question_id,
-        language=data.language, code=data.code, score=data.score,
-        submitted_at=datetime.utcnow()
-    )
-    db.add(submission)
-    db.commit()
-    db.refresh(submission)
-    return {"message": "Submitted successfully", "submission_id": submission.id, "score": data.score}
+    sub_id = str(uuid.uuid4())
+    submission = {
+        "student_id": current_user["id"],
+        "question_id": data.question_id,
+        "test_id": data.test_id,
+        "language": data.language,
+        "code": data.code,
+        "score": data.score,
+        "passed": data.passed,
+        "total": data.total,
+        "submitted_at": datetime.utcnow().isoformat(),
+    }
+    db.reference(f"/submissions/{sub_id}").set(submission)
+    return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score}

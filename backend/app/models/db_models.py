@@ -109,8 +109,9 @@
 
 
 """
-Database Models
-SQLAlchemy ORM models for all tables
+db_models.py
+SQLAlchemy models are no longer used — migrated to Firebase Realtime Database.
+This file is kept as an empty stub to avoid import errors during transition.
 """
 
 from sqlalchemy import Column, Integer, String, Text, Boolean, Float, DateTime, ForeignKey, Enum as SQLEnum
