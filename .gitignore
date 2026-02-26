@@ -13,4 +13,5 @@ backend/.env
 dsa-platform-web/node_modules/
 dsa-platform-web/dist/
 dsa-platform-web/.env
-dsa-platform-web/.env.local
+dsa-platform-web/.env.localdatabase/*.json 
+database/*.json 
