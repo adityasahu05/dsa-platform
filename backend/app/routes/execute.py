@@ -17,9 +17,8 @@ HEADERS = {
 }
 
 # ── Judge0 Language IDs ───────────────────────────────────────────────────────
-# Full list at: https://judge0-production-8e51.up.railway.app/languages
 LANGUAGE_IDS = {
-    "python":   71,   # Python 3.8.1  (use 92 for Python 3.11 if available)
+    "python":   71,   # Python 3.8.1
     "c":        50,   # C (GCC 9.2.0)
     "cpp":      54,   # C++ (GCC 9.2.0)
     "java":     62,   # Java (OpenJDK 13.0.1)
@@ -33,37 +32,16 @@ class TestCase(BaseModel):
     is_hidden: Optional[bool] = False
     points: Optional[int] = 1
 
-class TestResult(BaseModel):
-    id: Union[str, int]
-    passed: bool
-    actual_output: str
-    expected_output: str
-    is_hidden: Optional[bool] = False
-    points_earned: int
-    error: Optional[str] = None
-    time_ms: Optional[float] = None
-    memory_kb: Optional[float] = None
-    status: Optional[str] = None
-
 class ExecuteRequest(BaseModel):
     code: str
-    language: str                                   # "python" | "c" | "cpp" | "java"
+    language: str
     test_cases: List[TestCase]
     question_id: Optional[Union[str, int]] = None
-    time_limit: Optional[float] = 5.0              # seconds (per test case)
+    time_limit: Optional[float] = 5.0              # seconds
     memory_limit: Optional[int] = 256000           # KB
-
-class ExecuteResponse(BaseModel):
-    results: List[TestResult]
-    total_passed: int
-    total_cases: int
-    total_score: float
-    max_score: float
-    success: bool
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def normalize(text: str) -> str:
-    """Strip trailing whitespace/newlines for comparison."""
     return text.strip()
 
 def get_language_id(language: str) -> int:
@@ -77,10 +55,6 @@ def get_language_id(language: str) -> int:
 
 def submit_to_judge0(code: str, language_id: int, stdin: str,
                      time_limit: float, memory_limit: int) -> dict:
-    """
-    Submit a single test case to Judge0 and poll until it finishes.
-    Returns the Judge0 result dict.
-    """
     payload = {
         "source_code": code,
         "language_id": language_id,
@@ -90,7 +64,6 @@ def submit_to_judge0(code: str, language_id: int, stdin: str,
         "enable_per_process_and_thread_time_limit": False,
     }
 
-    # Submit
     resp = requests.post(
         f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=false",
         json=payload,
@@ -108,26 +81,30 @@ def submit_to_judge0(code: str, language_id: int, stdin: str,
     if not token:
         raise HTTPException(status_code=502, detail="Judge0 did not return a submission token")
 
-    # Poll for result (max 30 seconds)
-    for _ in range(30):
+    # Wait a bit for worker warmup, then poll for up to 60 seconds
+    time.sleep(3)
+    for _ in range(57):
         time.sleep(1)
-        result_resp = requests.get(
-            f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
-            headers=HEADERS,
-            timeout=10,
-        )
+        try:
+            result_resp = requests.get(
+                f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
+                headers=HEADERS,
+                timeout=10,
+            )
+        except Exception:
+            continue
+
         if result_resp.status_code != 200:
             continue
+
         result = result_resp.json()
         status_id = result.get("status", {}).get("id", 0)
-        # Status IDs 1 (In Queue) and 2 (Processing) mean still running
         if status_id not in (1, 2):
             return result
 
     raise HTTPException(status_code=504, detail="Judge0 execution timed out (polling)")
 
-def parse_result(judge0_result: dict, test_case: TestCase) -> TestResult:
-    """Convert a Judge0 result into our TestResult model."""
+def parse_result(judge0_result: dict, test_case: TestCase) -> dict:
     status = judge0_result.get("status", {})
     status_id = status.get("id", 0)
     status_desc = status.get("description", "Unknown")
@@ -135,55 +112,61 @@ def parse_result(judge0_result: dict, test_case: TestCase) -> TestResult:
     stdout = judge0_result.get("stdout") or ""
     stderr = judge0_result.get("stderr") or ""
     compile_output = judge0_result.get("compile_output") or ""
-    time_ms = float(judge0_result.get("time") or 0) * 1000   # seconds → ms
+    time_ms = float(judge0_result.get("time") or 0) * 1000
     memory_kb = float(judge0_result.get("memory") or 0)
 
-    # Build error message if any
     error = None
-    if status_id == 6:   # Compilation Error
+    if status_id == 6:
         error = compile_output or "Compilation error"
-    elif status_id == 5:  # Time Limit Exceeded
+    elif status_id == 5:
         error = "Time Limit Exceeded"
-    elif status_id == 11: # Memory Limit Exceeded
+    elif status_id == 11:
         error = "Memory Limit Exceeded"
-    elif status_id == 12: # Runtime Error (SIGSEGV)
+    elif status_id in (12, 13, 14, 15):
         error = f"Runtime Error: {stderr or status_desc}"
-    elif status_id not in (3,):  # 3 = Accepted
+    elif status_id not in (3,):
         error = stderr or compile_output or status_desc
 
-    # Compare output
     actual = normalize(stdout)
     expected = normalize(test_case.expected_output)
     passed = (status_id == 3) and (actual == expected)
 
-    return TestResult(
-        id=test_case.id,
-        passed=passed,
-        actual_output=actual,
-        expected_output=expected,
-        is_hidden=test_case.is_hidden,
-        points_earned=test_case.points if passed else 0,
-        error=error,
-        time_ms=round(time_ms, 2),
-        memory_kb=round(memory_kb, 2),
-        status=status_desc,
-    )
+    # Verdict string for frontend
+    if status_id == 5:
+        verdict = "TIME_LIMIT_EXCEEDED"
+    elif passed:
+        verdict = "PASS"
+    else:
+        verdict = "FAIL"
+
+    return {
+        "id": test_case.id,
+        "verdict": verdict,
+        "passed": passed,
+        "actual_output": actual,
+        "expected_output": expected,
+        "is_hidden": test_case.is_hidden,
+        "points_earned": test_case.points if passed else 0,
+        "error": error,
+        "stdout": actual,
+        "stderr": stderr or compile_output or None,
+        "time_ms": round(time_ms, 2),
+        "memory_kb": round(memory_kb, 2),
+        "status": status_desc,
+    }
 
 # ── Route ─────────────────────────────────────────────────────────────────────
-@router.post("/api/execute", response_model=ExecuteResponse)
+@router.post("/api/execute")
 async def execute_code(request: ExecuteRequest):
-    """
-    Execute code against all test cases using Judge0 CE.
-    Replaces the old Godbolt-based executor.
-    """
     if not request.test_cases:
         raise HTTPException(status_code=400, detail="No test cases provided")
 
     language_id = get_language_id(request.language)
-    results: List[TestResult] = []
+    results = []
     total_passed = 0
     total_score = 0.0
     max_score = sum(tc.points for tc in request.test_cases)
+    compilation_error = None
 
     for tc in request.test_cases:
         try:
@@ -195,40 +178,57 @@ async def execute_code(request: ExecuteRequest):
                 memory_limit=request.memory_limit,
             )
             result = parse_result(judge0_result, tc)
+
+            # Capture compilation error once
+            if result.get("status") == "Compilation Error" and not compilation_error:
+                compilation_error = result.get("stderr") or result.get("error")
+
         except HTTPException:
             raise
         except Exception as e:
-            # Don't crash the whole request if one test case fails to run
-            result = TestResult(
-                id=tc.id,
-                passed=False,
-                actual_output="",
-                expected_output=normalize(tc.expected_output),
-                is_hidden=tc.is_hidden,
-                points_earned=0,
-                error=f"Execution error: {str(e)}",
-                status="Internal Error",
-            )
+            result = {
+                "id": tc.id,
+                "verdict": "FAIL",
+                "passed": False,
+                "actual_output": "",
+                "expected_output": normalize(tc.expected_output),
+                "is_hidden": tc.is_hidden,
+                "points_earned": 0,
+                "error": f"Execution error: {str(e)}",
+                "stdout": None,
+                "stderr": str(e),
+                "time_ms": None,
+                "memory_kb": None,
+                "status": "Internal Error",
+            }
 
         results.append(result)
-        if result.passed:
+        if result["passed"]:
             total_passed += 1
-            total_score += result.points_earned
+            total_score += result["points_earned"]
 
-    return ExecuteResponse(
-        results=results,
-        total_passed=total_passed,
-        total_cases=len(request.test_cases),
-        total_score=total_score,
-        max_score=max_score,
-        success=total_passed == len(request.test_cases),
-    )
+    score = round((total_score / max_score * 100) if max_score > 0 else 0, 1)
+
+    return {
+        "results": results,
+        "total_passed": total_passed,
+        "total_cases": len(request.test_cases),
+        "total_score": total_score,
+        "max_score": max_score,
+        "success": total_passed == len(request.test_cases),
+        "compilation_error": compilation_error,
+        # ✅ summary field for frontend
+        "summary": {
+            "score": score,
+            "passed": total_passed,
+            "total": len(request.test_cases),
+        }
+    }
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @router.get("/api/execute/health")
 async def execution_health():
-    """Check if Judge0 is reachable."""
     try:
         resp = requests.get(
             f"{JUDGE0_URL}/system_info",
