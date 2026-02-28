@@ -4,6 +4,7 @@ from typing import Optional, Union, List
 import requests
 import time
 import os
+import concurrent.futures
 
 router = APIRouter()
 
@@ -53,8 +54,9 @@ def get_language_id(language: str) -> int:
         )
     return LANGUAGE_IDS[lang]
 
-def submit_to_judge0(code: str, language_id: int, stdin: str,
-                     time_limit: float, memory_limit: int) -> dict:
+def submit_token(code: str, language_id: int, stdin: str,
+                 time_limit: float, memory_limit: int) -> str:
+    """Submit a single test case to Judge0 and return the token. Does NOT poll."""
     payload = {
         "source_code": code,
         "language_id": language_id,
@@ -63,45 +65,40 @@ def submit_to_judge0(code: str, language_id: int, stdin: str,
         "memory_limit": memory_limit,
         "enable_per_process_and_thread_time_limit": False,
     }
-
     resp = requests.post(
         f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=false",
         json=payload,
         headers=HEADERS,
-        timeout=30,
+        timeout=15,
     )
-
     if resp.status_code not in (200, 201):
         raise HTTPException(
             status_code=502,
             detail=f"Judge0 submission failed: {resp.status_code} {resp.text}"
         )
-
     token = resp.json().get("token")
     if not token:
         raise HTTPException(status_code=502, detail="Judge0 did not return a submission token")
+    return token
 
-    # Wait a bit for worker warmup, then poll for up to 60 seconds
-    time.sleep(3)
-    for _ in range(57):
+def poll_token(token: str, max_wait: int = 30) -> dict:
+    """Poll a single Judge0 token until it finishes. Returns the result dict."""
+    for _ in range(max_wait):
         time.sleep(1)
         try:
-            result_resp = requests.get(
+            resp = requests.get(
                 f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
                 headers=HEADERS,
                 timeout=10,
             )
         except Exception:
             continue
-
-        if result_resp.status_code != 200:
+        if resp.status_code != 200:
             continue
-
-        result = result_resp.json()
+        result = resp.json()
         status_id = result.get("status", {}).get("id", 0)
-        if status_id not in (1, 2):
+        if status_id not in (1, 2):  # 1=In Queue, 2=Processing
             return result
-
     raise HTTPException(status_code=504, detail="Judge0 execution timed out (polling)")
 
 def parse_result(judge0_result: dict, test_case: TestCase) -> dict:
@@ -131,7 +128,6 @@ def parse_result(judge0_result: dict, test_case: TestCase) -> dict:
     expected = normalize(test_case.expected_output)
     passed = (status_id == 3) and (actual == expected)
 
-    # Verdict string for frontend
     if status_id == 5:
         verdict = "TIME_LIMIT_EXCEEDED"
     elif passed:
@@ -162,29 +158,47 @@ async def execute_code(request: ExecuteRequest):
         raise HTTPException(status_code=400, detail="No test cases provided")
 
     language_id = get_language_id(request.language)
+
+    # ── Step 1: Submit ALL test cases in parallel ──────────────────────────────
+    # This fires off all submissions at once instead of one-by-one.
+    tokens = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [
+            executor.submit(
+                submit_token,
+                request.code,
+                language_id,
+                tc.input,
+                request.time_limit,
+                request.memory_limit,
+            )
+            for tc in request.test_cases
+        ]
+        for future in futures:
+            tokens.append(future.result())  # raises HTTPException on failure
+
+    # ── Step 2: Brief warmup sleep (once, not per test case) ───────────────────
+    time.sleep(2)
+
+    # ── Step 3: Poll ALL tokens in parallel ────────────────────────────────────
+    judge0_results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        poll_futures = [executor.submit(poll_token, token, 30) for token in tokens]
+        for future in poll_futures:
+            judge0_results.append(future.result())  # raises HTTPException on timeout
+
+    # ── Step 4: Parse results ──────────────────────────────────────────────────
     results = []
     total_passed = 0
     total_score = 0.0
     max_score = sum(tc.points for tc in request.test_cases)
     compilation_error = None
 
-    for tc in request.test_cases:
+    for tc, judge0_result in zip(request.test_cases, judge0_results):
         try:
-            judge0_result = submit_to_judge0(
-                code=request.code,
-                language_id=language_id,
-                stdin=tc.input,
-                time_limit=request.time_limit,
-                memory_limit=request.memory_limit,
-            )
             result = parse_result(judge0_result, tc)
-
-            # Capture compilation error once
             if result.get("status") == "Compilation Error" and not compilation_error:
                 compilation_error = result.get("stderr") or result.get("error")
-
-        except HTTPException:
-            raise
         except Exception as e:
             result = {
                 "id": tc.id,
@@ -194,7 +208,7 @@ async def execute_code(request: ExecuteRequest):
                 "expected_output": normalize(tc.expected_output),
                 "is_hidden": tc.is_hidden,
                 "points_earned": 0,
-                "error": f"Execution error: {str(e)}",
+                "error": f"Parse error: {str(e)}",
                 "stdout": None,
                 "stderr": str(e),
                 "time_ms": None,
@@ -217,7 +231,6 @@ async def execute_code(request: ExecuteRequest):
         "max_score": max_score,
         "success": total_passed == len(request.test_cases),
         "compilation_error": compilation_error,
-        # ✅ summary field for frontend
         "summary": {
             "score": score,
             "passed": total_passed,
