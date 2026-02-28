@@ -81,14 +81,14 @@ function TestAttempt({ test, onBack }) {
   };
 
   const runCode = async () => {
-    if (!currentQuestion) return null;
-    const response = await api.executeCode({
-      language,
-      code,
-      question_id: currentQuestion.id,
-      tests: currentQuestion.test_cases || [],
-      time_limit_ms: currentQuestion.time_limit_ms || 2000,
-    });
+  const response = await api.executeCode(
+    code,
+    language,
+    currentQuestion.test_cases || [],
+    currentQuestion.id,
+    (currentQuestion.time_limit_ms || 2000) / 1000,
+    256000
+);
     if (!response || typeof response !== 'object') throw new Error('Invalid response from execution server');
     const safeResponse = {
       ...response,
