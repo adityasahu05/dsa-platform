@@ -336,13 +336,275 @@
 #     }
 
 
+# """
+# Authentication Routes
+# JWT-based login and registration — Firebase Realtime Database
+# Supports email/password + Google OAuth (via Firebase ID token)
+# """
+
+# from fastapi import APIRouter, HTTPException, Depends
+# from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+# from pydantic import BaseModel
+# from datetime import datetime, timedelta
+# import bcrypt
+# import jwt
+# import os
+# import uuid
+
+# from firebase_admin import db, auth as firebase_auth
+
+# router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# # ── Config ────────────────────────────────────────────────────────────────────
+# SECRET_KEY = os.getenv("SECRET_KEY", "dsa-platform-secret-key-change-in-production")
+# ALGORITHM = "HS256"
+# ACCESS_TOKEN_EXPIRE_HOURS = 24
+
+# security = HTTPBearer()
+
+
+# # ── Pydantic schemas ──────────────────────────────────────────────────────────
+# class RegisterRequest(BaseModel):
+#     name: str
+#     email: str
+#     password: str
+#     role: str  # "teacher" or "student"
+
+
+# class LoginRequest(BaseModel):
+#     email: str
+#     password: str
+
+
+# class GoogleAuthRequest(BaseModel):
+#     id_token: str
+#     role: str | None = None  # required only on first login
+
+
+# class AuthResponse(BaseModel):
+#     token: str
+#     user: dict
+
+
+# class NeedsRoleResponse(BaseModel):
+#     needs_role: bool
+#     firebase_uid: str
+#     name: str
+#     email: str
+
+
+# # ── Helpers ───────────────────────────────────────────────────────────────────
+# def hash_password(password: str) -> str:
+#     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+# def verify_password(password: str, hashed: str) -> bool:
+#     return bcrypt.checkpw(password.encode(), hashed.encode())
+
+
+# def create_token(user_id: str, role: str, name: str, email: str) -> str:
+#     payload = {
+#         "sub": str(user_id),
+#         "role": role,
+#         "name": name,
+#         "email": email,
+#         "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+#     }
+#     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# def decode_token(token: str) -> dict:
+#     try:
+#         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#     except jwt.ExpiredSignatureError:
+#         raise HTTPException(status_code=401, detail="Token expired. Please login again.")
+#     except jwt.InvalidTokenError:
+#         raise HTTPException(status_code=401, detail="Invalid token.")
+
+
+# def get_user_by_email(email: str):
+#     """Find a user in Firebase by email"""
+#     users_ref = db.reference("/users")
+#     all_users = users_ref.get() or {}
+#     for user_id, user_data in all_users.items():
+#         if user_data.get("email") == email:
+#             user_data["id"] = user_id
+#             return user_data
+#     return None
+
+
+# def get_user_by_id(user_id: str):
+#     """Find a user in Firebase by ID"""
+#     user_ref = db.reference(f"/users/{user_id}")
+#     user = user_ref.get()
+#     if user:
+#         user["id"] = user_id
+#     return user
+
+
+# def get_current_user(
+#     credentials: HTTPAuthorizationCredentials = Depends(security)
+# ) -> dict:
+#     """Dependency: extract and validate JWT, return user dict"""
+#     payload = decode_token(credentials.credentials)
+#     user = get_user_by_id(payload["sub"])
+#     if not user:
+#         raise HTTPException(status_code=401, detail="User not found.")
+#     return user
+
+
+# def require_teacher(current_user: dict = Depends(get_current_user)) -> dict:
+#     """Dependency: ensure current user is a teacher"""
+#     if current_user.get("role") != "teacher":
+#         raise HTTPException(status_code=403, detail="Teacher access required.")
+#     return current_user
+
+
+# def require_student(current_user: dict = Depends(get_current_user)) -> dict:
+#     """Dependency: ensure current user is a student"""
+#     if current_user.get("role") != "student":
+#         raise HTTPException(status_code=403, detail="Student access required.")
+#     return current_user
+
+
+# # ── Routes ────────────────────────────────────────────────────────────────────
+# @router.post("/register", response_model=AuthResponse)
+# def register(data: RegisterRequest):
+#     """Register a new teacher or student account"""
+#     existing = get_user_by_email(data.email)
+#     if existing:
+#         raise HTTPException(status_code=400, detail="Email already registered.")
+
+#     role_lower = data.role.lower()
+#     if role_lower not in ("teacher", "student"):
+#         raise HTTPException(status_code=400, detail="Role must be 'teacher' or 'student'.")
+
+#     user_id = str(uuid.uuid4())
+#     user_data = {
+#         "name": data.name,
+#         "email": data.email,
+#         "password_hash": hash_password(data.password),
+#         "role": role_lower,
+#         "created_at": datetime.utcnow().isoformat()
+#     }
+
+#     db.reference(f"/users/{user_id}").set(user_data)
+
+#     token = create_token(user_id, role_lower, data.name, data.email)
+#     return {
+#         "token": token,
+#         "user": {"id": user_id, "name": data.name, "email": data.email, "role": role_lower}
+#     }
+
+
+# @router.post("/login", response_model=AuthResponse)
+# def login(data: LoginRequest):
+#     """Login with email and password, returns JWT token"""
+#     user = get_user_by_email(data.email)
+#     if not user or not verify_password(data.password, user["password_hash"]):
+#         raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+#     token = create_token(user["id"], user["role"], user["name"], user["email"])
+#     return {
+#         "token": token,
+#         "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]}
+#     }
+
+
+# @router.post("/google")
+# def google_auth(data: GoogleAuthRequest):
+#     """
+#     Authenticate with Google.
+#     - Verifies Firebase ID token
+#     - If user exists → return JWT
+#     - If new user + role provided → create user, return JWT
+#     - If new user + no role → return needs_role: true so frontend can ask
+#     """
+#     # Verify the Firebase ID token
+#     try:
+#         decoded = firebase_auth.verify_id_token(data.id_token)
+#     except Exception:
+#         raise HTTPException(status_code=401, detail="Invalid Google token.")
+
+#     firebase_uid = decoded["uid"]
+#     email = decoded.get("email", "")
+#     name = decoded.get("name", email.split("@")[0])
+
+#     # Check if user already exists in our DB
+#     existing = get_user_by_email(email)
+#     if existing:
+#         token = create_token(existing["id"], existing["role"], existing["name"], existing["email"])
+#         return {
+#             "token": token,
+#             "user": {"id": existing["id"], "name": existing["name"], "email": existing["email"], "role": existing["role"]}
+#         }
+
+#     # New user — need role
+#     if not data.role:
+#         return {
+#             "needs_role": True,
+#             "firebase_uid": firebase_uid,
+#             "name": name,
+#             "email": email
+#         }
+
+#     role_lower = data.role.lower()
+#     if role_lower not in ("teacher", "student"):
+#         raise HTTPException(status_code=400, detail="Role must be 'teacher' or 'student'.")
+
+#     # Create new user (no password_hash for Google users)
+#     user_id = str(uuid.uuid4())
+#     user_data = {
+#         "name": name,
+#         "email": email,
+#         "password_hash": "",
+#         "role": role_lower,
+#         "auth_provider": "google",
+#         "firebase_uid": firebase_uid,
+#         "created_at": datetime.utcnow().isoformat()
+#     }
+#     db.reference(f"/users/{user_id}").set(user_data)
+
+#     token = create_token(user_id, role_lower, name, email)
+#     return {
+#         "token": token,
+#         "user": {"id": user_id, "name": name, "email": email, "role": role_lower}
+#     }
+
+
+# @router.get("/me")
+# def get_me(current_user: dict = Depends(get_current_user)):
+#     """Get current logged-in user info"""
+#     return {
+#         "id": current_user["id"],
+#         "name": current_user["name"],
+#         "email": current_user["email"],
+#         "role": current_user["role"]
+#     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 Authentication Routes
 JWT-based login and registration — Firebase Realtime Database
 Supports email/password + Google OAuth (via Firebase ID token)
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -357,6 +619,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "dsa-platform-secret-key-change-in-production")
+SUPERADMIN_SECRET_KEY = os.getenv("SUPERADMIN_SECRET_KEY", "1122334455")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
@@ -368,7 +631,7 @@ class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
-    role: str  # "teacher" or "student"
+    role: str | None = None  # ignored — all new users are students
 
 
 class LoginRequest(BaseModel):
@@ -378,19 +641,18 @@ class LoginRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     id_token: str
-    role: str | None = None  # required only on first login
+    role: str | None = None  # ignored — all new Google users are students
+
+
+class SuperAdminRegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
 
 
 class AuthResponse(BaseModel):
     token: str
     user: dict
-
-
-class NeedsRoleResponse(BaseModel):
-    needs_role: bool
-    firebase_uid: str
-    name: str
-    email: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -467,33 +729,67 @@ def require_student(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
+def require_superadmin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Dependency: ensure current user is a superadmin"""
+    if current_user.get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin access required.")
+    return current_user
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @router.post("/register", response_model=AuthResponse)
 def register(data: RegisterRequest):
-    """Register a new teacher or student account"""
+    """Register a new account — all users default to student role"""
     existing = get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered.")
-
-    role_lower = data.role.lower()
-    if role_lower not in ("teacher", "student"):
-        raise HTTPException(status_code=400, detail="Role must be 'teacher' or 'student'.")
 
     user_id = str(uuid.uuid4())
     user_data = {
         "name": data.name,
         "email": data.email,
         "password_hash": hash_password(data.password),
-        "role": role_lower,
+        "role": "student",  # always student — superadmin promotes to teacher
         "created_at": datetime.utcnow().isoformat()
     }
 
     db.reference(f"/users/{user_id}").set(user_data)
 
-    token = create_token(user_id, role_lower, data.name, data.email)
+    token = create_token(user_id, "student", data.name, data.email)
     return {
         "token": token,
-        "user": {"id": user_id, "name": data.name, "email": data.email, "role": role_lower}
+        "user": {"id": user_id, "name": data.name, "email": data.email, "role": "student"}
+    }
+
+
+@router.post("/superadmin/signup", response_model=AuthResponse)
+def superadmin_signup(data: SuperAdminRegisterRequest, key: str = Query(...)):
+    """
+    Secret superadmin signup — only accessible with correct key.
+    URL: POST /api/auth/superadmin/signup?key=1122334455
+    """
+    if key != SUPERADMIN_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Invalid superadmin key.")
+
+    existing = get_user_by_email(data.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered.")
+
+    user_id = str(uuid.uuid4())
+    user_data = {
+        "name": data.name,
+        "email": data.email,
+        "password_hash": hash_password(data.password),
+        "role": "superadmin",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    db.reference(f"/users/{user_id}").set(user_data)
+
+    token = create_token(user_id, "superadmin", data.name, data.email)
+    return {
+        "token": token,
+        "user": {"id": user_id, "name": data.name, "email": data.email, "role": "superadmin"}
     }
 
 
@@ -517,10 +813,8 @@ def google_auth(data: GoogleAuthRequest):
     Authenticate with Google.
     - Verifies Firebase ID token
     - If user exists → return JWT
-    - If new user + role provided → create user, return JWT
-    - If new user + no role → return needs_role: true so frontend can ask
+    - If new user → auto-register as student, return JWT
     """
-    # Verify the Firebase ID token
     try:
         decoded = firebase_auth.verify_id_token(data.id_token)
     except Exception:
@@ -530,7 +824,7 @@ def google_auth(data: GoogleAuthRequest):
     email = decoded.get("email", "")
     name = decoded.get("name", email.split("@")[0])
 
-    # Check if user already exists in our DB
+    # Existing user — return JWT directly
     existing = get_user_by_email(email)
     if existing:
         token = create_token(existing["id"], existing["role"], existing["name"], existing["email"])
@@ -539,36 +833,23 @@ def google_auth(data: GoogleAuthRequest):
             "user": {"id": existing["id"], "name": existing["name"], "email": existing["email"], "role": existing["role"]}
         }
 
-    # New user — need role
-    if not data.role:
-        return {
-            "needs_role": True,
-            "firebase_uid": firebase_uid,
-            "name": name,
-            "email": email
-        }
-
-    role_lower = data.role.lower()
-    if role_lower not in ("teacher", "student"):
-        raise HTTPException(status_code=400, detail="Role must be 'teacher' or 'student'.")
-
-    # Create new user (no password_hash for Google users)
+    # New Google user — auto-register as student
     user_id = str(uuid.uuid4())
     user_data = {
         "name": name,
         "email": email,
         "password_hash": "",
-        "role": role_lower,
+        "role": "student",  # always student
         "auth_provider": "google",
         "firebase_uid": firebase_uid,
         "created_at": datetime.utcnow().isoformat()
     }
     db.reference(f"/users/{user_id}").set(user_data)
 
-    token = create_token(user_id, role_lower, name, email)
+    token = create_token(user_id, "student", name, email)
     return {
         "token": token,
-        "user": {"id": user_id, "name": name, "email": email, "role": role_lower}
+        "user": {"id": user_id, "name": name, "email": email, "role": "student"}
     }
 
 
