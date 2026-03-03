@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import apiClient from "../services/api";
+import { apiClient } from "../services/api";    
 
 const ROOT_EMAIL = "sahuaditya2305@gmail.com";
 
