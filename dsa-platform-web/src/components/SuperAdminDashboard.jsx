@@ -1,294 +1,572 @@
-import { useState } from 'react';
-import axios from 'axios';
+import { useState, useEffect, useCallback } from "react";
+import apiClient from "../services/api";
 
-const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/admin';
-const ROOT_SUPERADMIN_EMAIL = 'sahuaditya2305@gmail.com';
+const ROOT_EMAIL = "sahuaditya2305@gmail.com";
 
-const theme = {
-  bg: '#0b1120',
-  surface: '#111827',
-  surfaceHover: '#1a2235',
-  border: '#1f2d45',
-  borderFocus: '#3b82f6',
-  text: '#f1f5f9',
-  textMuted: '#64748b',
-  textSub: '#94a3b8',
-  primary: '#3b82f6',
-  primaryHover: '#2563eb',
-  success: '#22c55e',
-  successBg: '#052e16',
-  successBorder: '#166534',
-  error: '#f87171',
-  errorBorder: '#7f1d1d',
-  errorBg: '#1c0a0a',
-  inputBg: '#0d1829',
-  radiusSm: '7px',
-  font: "'DM Sans', system-ui, sans-serif",
+const TABS = [
+  { id: "users",       label: "Users",       icon: "👥" },
+  { id: "tests",       label: "Tests",        icon: "📝" },
+  { id: "student",     label: "Student View", icon: "🎓" },
+  { id: "submissions", label: "Submissions",  icon: "📊" },
+  { id: "analytics",  label: "Analytics",    icon: "📈" },
+];
+
+const ROLE_COLORS = {
+  superadmin: { bg: "#2d1b69", text: "#a78bfa", border: "#7c3aed" },
+  teacher:    { bg: "#1a3a2a", text: "#34d399", border: "#059669" },
+  student:    { bg: "#1e3a5f", text: "#60a5fa", border: "#2563eb" },
 };
 
-function ErrorBox({ message }) {
-  return (
-    <div style={{
-      background: theme.errorBg, border: `1px solid ${theme.errorBorder}`,
-      borderRadius: theme.radiusSm, padding: '11px 14px', marginBottom: '16px',
-      fontSize: '13px', color: theme.error,
-      display: 'flex', alignItems: 'flex-start', gap: '8px',
-    }}>
-      <span style={{ flexShrink: 0 }}>⚠</span>
-      <span>{message}</span>
-    </div>
-  );
-}
-
-function SuccessBox({ message }) {
-  return (
-    <div style={{
-      background: theme.successBg, border: `1px solid ${theme.successBorder}`,
-      borderRadius: theme.radiusSm, padding: '11px 14px', marginBottom: '16px',
-      fontSize: '13px', color: theme.success,
-      display: 'flex', alignItems: 'flex-start', gap: '8px',
-    }}>
-      <span style={{ flexShrink: 0 }}>✓</span>
-      <span>{message}</span>
-    </div>
-  );
-}
-
-function RoleBadge({ role }) {
-  const styles = {
-    superadmin: { bg: '#2e1065', color: '#a78bfa', border: '#4c1d95' },
-    teacher:    { bg: '#0c2340', color: '#60a5fa', border: '#1e3a5f' },
-    student:    { bg: '#052e16', color: '#4ade80', border: '#166534' },
-  };
-  const s = styles[role] || styles.student;
+const RoleBadge = ({ role }) => {
+  const c = ROLE_COLORS[role] || ROLE_COLORS.student;
   return (
     <span style={{
-      background: s.bg, color: s.color, border: `1px solid ${s.border}`,
-      borderRadius: '20px', padding: '3px 12px', fontSize: '12px', fontWeight: 600,
+      background: c.bg, color: c.text, border: `1px solid ${c.border}`,
+      borderRadius: 6, padding: "2px 10px", fontSize: 12, fontWeight: 700,
+      letterSpacing: "0.04em", textTransform: "uppercase",
     }}>
-      {role === 'superadmin' ? '👑 Superadmin' : role === 'teacher' ? '👨‍🏫 Teacher' : '🎓 Student'}
+      {role}
     </span>
   );
-}
+};
 
-function RoleButton({ emoji, label, active, disabled, onClick }) {
-  const activeStyles = {
-    '👨‍🏫': { bg: '#0c2340', border: '#1e3a5f', color: '#60a5fa' },
-    '🎓':   { bg: '#052e16', border: '#166534', color: '#4ade80' },
-    '👑':   { bg: '#2e1065', border: '#4c1d95', color: '#a78bfa' },
+// ─── USERS TAB ───────────────────────────────────────────────────────────────
+function UsersTab({ isRoot }) {
+  const [email, setEmail]     = useState("");
+  const [user, setUser]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+  const [success, setSuccess] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const search = async () => {
+    if (!email.trim()) return;
+    setLoading(true); setError(""); setSuccess(""); setUser(null);
+    try {
+      const res = await apiClient.get(`/api/admin/users/search?email=${encodeURIComponent(email.trim())}`);
+      setUser(res.data);
+    } catch (e) {
+      setError(e.response?.data?.detail || "User not found.");
+    } finally { setLoading(false); }
   };
-  const s = activeStyles[emoji] || {};
+
+  const changeRole = async (newRole) => {
+    setError(""); setSuccess("");
+    try {
+      await apiClient.patch("/api/admin/users/role", { email: user.email, role: newRole });
+      setUser(prev => ({ ...prev, role: newRole }));
+      setSuccess(`Role updated to ${newRole}.`);
+    } catch (e) {
+      setError(e.response?.data?.detail || "Failed to update role.");
+    }
+  };
+
+  const deleteUser = async () => {
+    if (!window.confirm(`Delete ${user.name} (${user.email})? This cannot be undone.`)) return;
+    setDeleting(true); setError(""); setSuccess("");
+    try {
+      await apiClient.delete(`/api/admin/users/${user.id}`);
+      setSuccess("User deleted successfully.");
+      setUser(null); setEmail("");
+    } catch (e) {
+      setError(e.response?.data?.detail || "Failed to delete user.");
+    } finally { setDeleting(false); }
+  };
+
+  const isTargetRoot = user?.email?.toLowerCase() === ROOT_EMAIL.toLowerCase();
+  const canMakeSuperadmin = isRoot && !isTargetRoot;
+
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled || active}
-      style={{
-        flex: 1, padding: '10px',
-        background: active ? s.bg : 'transparent',
-        border: `1.5px solid ${active ? s.border : theme.border}`,
-        borderRadius: theme.radiusSm,
-        color: active ? s.color : theme.textSub,
-        fontSize: '13px', fontWeight: 600, fontFamily: theme.font,
-        cursor: active || disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled && !active ? 0.6 : 1,
-        transition: 'all 0.15s',
-      }}
-    >
-      {emoji} {active ? `Already ${label}` : `Make ${label}`}
-    </button>
+    <div>
+      <h2 style={styles.sectionTitle}>User Management</h2>
+      <p style={styles.sectionSubtitle}>Search a user by email to view and manage their role.</p>
+
+      {/* Search */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        <input
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && search()}
+          placeholder="Enter user email..."
+          style={styles.input}
+        />
+        <button onClick={search} disabled={loading} style={styles.btnPrimary}>
+          {loading ? "Searching…" : "Search"}
+        </button>
+      </div>
+
+      {error   && <div style={styles.alertError}>{error}</div>}
+      {success && <div style={styles.alertSuccess}>{success}</div>}
+
+      {/* User Card */}
+      {user && (
+        <div style={styles.card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <span style={styles.userName}>{user.name}</span>
+                <RoleBadge role={user.role} />
+                {isTargetRoot && (
+                  <span style={{ background: "#3b0764", color: "#d8b4fe", border: "1px solid #7e22ce", borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em" }}>
+                    ROOT
+                  </span>
+                )}
+              </div>
+              <div style={styles.userEmail}>{user.email}</div>
+              <div style={styles.userMeta}>
+                Provider: {user.auth_provider} &nbsp;·&nbsp; Joined: {user.created_at ? new Date(user.created_at).toLocaleDateString() : "—"}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            {!isTargetRoot && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {user.role !== "teacher" && (
+                  <button onClick={() => changeRole("teacher")} style={styles.btnGreen}>Make Teacher</button>
+                )}
+                {user.role !== "student" && (
+                  <button onClick={() => changeRole("student")} style={styles.btnBlue}>Make Student</button>
+                )}
+                {canMakeSuperadmin && user.role !== "superadmin" && (
+                  <button onClick={() => changeRole("superadmin")} style={styles.btnPurple}>Make Superadmin</button>
+                )}
+                <button onClick={deleteUser} disabled={deleting} style={styles.btnRed}>
+                  {deleting ? "Deleting…" : "Delete User"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function SuperAdminDashboard({ user }) {
-  const isRoot = user?.email?.toLowerCase() === ROOT_SUPERADMIN_EMAIL.toLowerCase();
+// ─── SUBMISSIONS TAB ──────────────────────────────────────────────────────────
+function SubmissionsTab() {
+  const [subs, setSubs]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
 
-  const [email, setEmail] = useState('');
-  const [foundUser, setFoundUser] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [searchError, setSearchError] = useState('');
-  const [actionError, setActionError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiClient.get("/api/admin/submissions?limit=100");
+        setSubs(res.data);
+      } catch (e) {
+        setError(e.response?.data?.detail || "Failed to load submissions.");
+      } finally { setLoading(false); }
+    })();
+  }, []);
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    setFoundUser(null); setSearchError(''); setSuccessMsg(''); setActionError('');
-    setSearching(true);
-    try {
-      const res = await axios.get(`${API_URL}/users/search`, { params: { email } });
-      setFoundUser(res.data);
-    } catch (err) {
-      setSearchError(err.response?.data?.detail || 'User not found.');
-    } finally { setSearching(false); }
-  };
-
-  const handleRoleChange = async (newRole) => {
-    setActionError(''); setSuccessMsg(''); setUpdating(true);
-    try {
-      await axios.patch(`${API_URL}/users/role`, { email: foundUser.email, role: newRole });
-      setFoundUser({ ...foundUser, role: newRole });
-      setSuccessMsg(`${foundUser.name} is now a ${newRole}.`);
-    } catch (err) {
-      setActionError(err.response?.data?.detail || 'Failed to update role.');
-    } finally { setUpdating(false); }
-  };
-
-  const isTargetRoot = foundUser?.email?.toLowerCase() === ROOT_SUPERADMIN_EMAIL.toLowerCase();
-  const isTargetSuperadmin = foundUser?.role === 'superadmin';
-
-  const renderActionButtons = () => {
-    if (!foundUser) return null;
-
-    // Root account — untouchable
-    if (isTargetRoot) {
-      return (
-        <p style={{ fontSize: '13px', color: theme.textMuted, textAlign: 'center', margin: 0 }}>
-          Root superadmin account cannot be modified.
-        </p>
-      );
-    }
-
-    // Target is superadmin but current user is not root
-    if (isTargetSuperadmin && !isRoot) {
-      return (
-        <p style={{ fontSize: '13px', color: theme.textMuted, textAlign: 'center', margin: 0 }}>
-          Only the root superadmin can change another superadmin's role.
-        </p>
-      );
-    }
-
-    return (
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <RoleButton emoji="👨‍🏫" label="Teacher"
-          active={foundUser.role === 'teacher'} disabled={updating}
-          onClick={() => handleRoleChange('teacher')} />
-        <RoleButton emoji="🎓" label="Student"
-          active={foundUser.role === 'student'} disabled={updating}
-          onClick={() => handleRoleChange('student')} />
-        {isRoot && (
-          <RoleButton emoji="👑" label="Superadmin"
-            active={foundUser.role === 'superadmin'} disabled={updating}
-            onClick={() => handleRoleChange('superadmin')} />
-        )}
-      </div>
-    );
-  };
+  if (loading) return <div style={styles.loading}>Loading submissions…</div>;
+  if (error)   return <div style={styles.alertError}>{error}</div>;
 
   return (
-    <div style={{
-      minHeight: '100vh', backgroundColor: theme.bg,
-      fontFamily: theme.font, padding: '40px 24px',
-    }}>
-      <div style={{ maxWidth: '560px', margin: '0 auto' }}>
+    <div>
+      <h2 style={styles.sectionTitle}>All Submissions</h2>
+      <p style={styles.sectionSubtitle}>{subs.length} submission{subs.length !== 1 ? "s" : ""} across all teachers and students.</p>
 
-        {/* Header */}
-        <div style={{ marginBottom: '36px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-            <div style={{
-              width: '40px', height: '40px',
-              background: isRoot
-                ? 'linear-gradient(135deg, #7c3aed, #4c1d95)'
-                : 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-              borderRadius: '10px', display: 'flex', alignItems: 'center',
-              justifyContent: 'center', fontSize: '18px',
-              boxShadow: isRoot
-                ? '0 6px 16px rgba(124,58,237,0.3)'
-                : '0 6px 16px rgba(59,130,246,0.3)',
-            }}>{isRoot ? '👑' : '🛡️'}</div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: theme.text, letterSpacing: '-0.01em' }}>
-                {isRoot ? 'Root Superadmin Panel' : 'Superadmin Panel'}
-              </h1>
-              <p style={{ margin: 0, fontSize: '13px', color: theme.textMuted }}>
-                {isRoot ? 'Full control — manage all user roles' : 'Manage teacher & student roles'}
-              </p>
-            </div>
+      {subs.length === 0 ? (
+        <div style={styles.empty}>No submissions yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                {["Student", "Question", "Language", "Score", "Passed", "Submitted"].map(h => (
+                  <th key={h} style={styles.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {subs.map(s => (
+                <tr key={s.id} style={styles.tr}>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: 600, color: "#f1f5f9" }}>{s.student_name}</div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{s.student_email}</div>
+                  </td>
+                  <td style={styles.td}>{s.question_title}</td>
+                  <td style={styles.td}>
+                    <span style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 5, padding: "2px 8px", fontSize: 12, color: "#94a3b8", fontFamily: "monospace" }}>
+                      {s.language}
+                    </span>
+                  </td>
+                  <td style={styles.td}>
+                    <span style={{ fontWeight: 700, color: s.score >= 70 ? "#34d399" : s.score >= 40 ? "#fbbf24" : "#f87171" }}>
+                      {s.score ?? "—"}%
+                    </span>
+                  </td>
+                  <td style={styles.td}>
+                    <span style={{ color: s.passed === s.total ? "#34d399" : "#f87171", fontWeight: 600 }}>
+                      {s.passed ?? 0}/{s.total ?? 0}
+                    </span>
+                  </td>
+                  <td style={styles.td}>
+                    <span style={{ fontSize: 12, color: "#64748b" }}>
+                      {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : "—"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ANALYTICS TAB ───────────────────────────────────────────────────────────
+function AnalyticsTab() {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiClient.get("/api/admin/analytics");
+        setData(res.data);
+      } catch (e) {
+        setError(e.response?.data?.detail || "Failed to load analytics.");
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  if (loading) return <div style={styles.loading}>Loading analytics…</div>;
+  if (error)   return <div style={styles.alertError}>{error}</div>;
+
+  const StatCard = ({ label, value, sub, accent }) => (
+    <div style={{ ...styles.card, borderLeft: `3px solid ${accent || "#3b82f6"}`, flex: "1 1 160px" }}>
+      <div style={{ fontSize: 28, fontWeight: 800, color: accent || "#f1f5f9", lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8", marginTop: 4 }}>{label}</div>
+      {sub && <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <h2 style={styles.sectionTitle}>Platform Analytics</h2>
+      <p style={styles.sectionSubtitle}>Real-time stats across the entire platform.</p>
+
+      {/* Users */}
+      <div style={styles.groupLabel}>👥 Users</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+        <StatCard label="Total Users"   value={data.users.total}      accent="#3b82f6" />
+        <StatCard label="Students"      value={data.users.students}   accent="#60a5fa" />
+        <StatCard label="Teachers"      value={data.users.teachers}   accent="#34d399" />
+        <StatCard label="Superadmins"   value={data.users.superadmins} accent="#a78bfa" />
+      </div>
+
+      {/* Tests */}
+      <div style={styles.groupLabel}>📝 Tests</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+        <StatCard label="Total Tests"  value={data.tests.total}    accent="#f59e0b" />
+        <StatCard label="Active"       value={data.tests.active}   accent="#34d399" />
+        <StatCard label="Inactive"     value={data.tests.inactive} accent="#64748b" />
+      </div>
+
+      {/* Questions + Submissions */}
+      <div style={styles.groupLabel}>📊 Submissions</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+        <StatCard label="Total Questions"   value={data.questions.total}          accent="#f472b6" />
+        <StatCard label="Total Submissions" value={data.submissions.total}        accent="#fb923c" />
+        <StatCard label="Average Score"     value={`${data.submissions.average_score}%`} accent="#34d399" />
+      </div>
+
+      {/* By Language */}
+      {Object.keys(data.submissions.by_language).length > 0 && (
+        <>
+          <div style={styles.groupLabel}>⚙️ Submissions by Language</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {Object.entries(data.submissions.by_language).map(([lang, count]) => (
+              <StatCard key={lang} label={lang} value={count} accent="#38bdf8" />
+            ))}
           </div>
-        </div>
+        </>
+      )}
+    </div>
+  );
+}
 
-        {/* Search card */}
-        <div style={{
-          background: theme.surface, border: `1px solid ${theme.border}`,
-          borderRadius: '12px', padding: '28px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-        }}>
-          <p style={{ margin: '0 0 18px', fontSize: '13px', fontWeight: 600, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Search User
-          </p>
-
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="user@example.com"
-              required
-              style={{
-                flex: 1, padding: '10px 14px',
-                background: theme.inputBg, border: `1.5px solid ${theme.border}`,
-                borderRadius: theme.radiusSm, color: theme.text,
-                fontSize: '14px', fontFamily: theme.font, outline: 'none',
-              }}
-              onFocus={e => e.target.style.borderColor = theme.borderFocus}
-              onBlur={e => e.target.style.borderColor = theme.border}
-            />
-            <button
-              type="submit"
-              disabled={searching}
-              style={{
-                padding: '10px 20px', background: theme.primary, color: '#fff',
-                border: 'none', borderRadius: theme.radiusSm,
-                fontSize: '14px', fontWeight: 600, fontFamily: theme.font,
-                cursor: searching ? 'not-allowed' : 'pointer',
-                opacity: searching ? 0.7 : 1, whiteSpace: 'nowrap',
-              }}
-            >
-              {searching ? 'Searching…' : 'Search'}
-            </button>
-          </form>
-
-          {searchError && <ErrorBox message={searchError} />}
-
-          {/* User result */}
-          {foundUser && (
-            <div style={{
-              background: theme.bg, border: `1px solid ${theme.border}`,
-              borderRadius: '10px', padding: '20px',
-            }}>
-              {actionError && <ErrorBox message={actionError} />}
-              {successMsg && <SuccessBox message={successMsg} />}
-
-              {/* User info */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-                <div>
-                  <p style={{ margin: '0 0 4px', fontSize: '15px', fontWeight: 700, color: theme.text }}>
-                    {foundUser.name}
-                    {isTargetRoot && (
-                      <span style={{ marginLeft: '8px', fontSize: '11px', color: '#a78bfa', fontWeight: 600 }}>ROOT</span>
-                    )}
-                  </p>
-                  <p style={{ margin: '0 0 8px', fontSize: '13px', color: theme.textMuted }}>
-                    {foundUser.email}
-                  </p>
-                  <RoleBadge role={foundUser.role} />
-                </div>
-                <div style={{
-                  width: '44px', height: '44px', borderRadius: '50%',
-                  background: theme.surfaceHover, border: `1px solid ${theme.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '18px', color: theme.textSub, fontWeight: 700,
-                }}>
-                  {foundUser.name?.[0]?.toUpperCase() || '?'}
-                </div>
-              </div>
-
-              {renderActionButtons()}
-            </div>
-          )}
-        </div>
+// ─── COMING SOON PLACEHOLDER ─────────────────────────────────────────────────
+function ComingSoon({ tab }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 20px", textAlign: "center" }}>
+      <div style={{ fontSize: 56, marginBottom: 16 }}>{tab.icon}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", marginBottom: 8 }}>{tab.label}</div>
+      <div style={{ fontSize: 14, color: "#475569", maxWidth: 320 }}>
+        This section is under construction and will be available in the next session.
+      </div>
+      <div style={{ marginTop: 20, background: "#1e293b", border: "1px dashed #334155", borderRadius: 10, padding: "8px 20px", fontSize: 12, color: "#64748b", letterSpacing: "0.05em" }}>
+        COMING SOON
       </div>
     </div>
   );
 }
 
-export default SuperAdminDashboard;
+// ─── MAIN DASHBOARD ───────────────────────────────────────────────────────────
+export default function SuperAdminDashboard({ user, onLogout }) {
+  const [activeTab, setActiveTab] = useState("users");
+  const isRoot = user?.email?.toLowerCase() === ROOT_EMAIL.toLowerCase();
+
+  const renderTab = () => {
+    switch (activeTab) {
+      case "users":       return <UsersTab isRoot={isRoot} />;
+      case "submissions": return <SubmissionsTab />;
+      case "analytics":  return <AnalyticsTab />;
+      case "tests":      return <ComingSoon tab={TABS.find(t => t.id === "tests")} />;
+      case "student":    return <ComingSoon tab={TABS.find(t => t.id === "student")} />;
+      default:           return null;
+    }
+  };
+
+  return (
+    <div style={styles.root}>
+      {/* Header */}
+      <div style={{ ...styles.header, borderBottom: isRoot ? "2px solid #7c3aed" : "2px solid #2563eb" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: "50%",
+            background: isRoot ? "linear-gradient(135deg, #7c3aed, #4f46e5)" : "linear-gradient(135deg, #2563eb, #0ea5e9)",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+          }}>
+            {isRoot ? "👑" : "🛡️"}
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#f1f5f9", lineHeight: 1.2 }}>
+              {isRoot ? "Root Superadmin" : "Superadmin"}
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>{user?.email}</div>
+          </div>
+        </div>
+        <button onClick={onLogout} style={styles.logoutBtn}>Logout</button>
+      </div>
+
+      {/* Tab Bar */}
+      <div style={styles.tabBar}>
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              ...styles.tabBtn,
+              ...(activeTab === tab.id ? styles.tabBtnActive : {}),
+            }}
+          >
+            <span style={{ marginRight: 6 }}>{tab.icon}</span>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={styles.content}>
+        {renderTab()}
+      </div>
+    </div>
+  );
+}
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+const styles = {
+  root: {
+    minHeight: "100vh",
+    background: "#0b1120",
+    fontFamily: "'DM Sans', sans-serif",
+    color: "#f1f5f9",
+  },
+  header: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "14px 28px",
+    background: "#111827",
+    position: "sticky", top: 0, zIndex: 100,
+  },
+  tabBar: {
+    display: "flex", gap: 4,
+    padding: "0 28px",
+    background: "#111827",
+    borderBottom: "1px solid #1f2d45",
+    overflowX: "auto",
+  },
+  tabBtn: {
+    padding: "12px 18px",
+    background: "transparent",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: 600,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    transition: "color 0.15s, border-color 0.15s",
+  },
+  tabBtnActive: {
+    color: "#f1f5f9",
+    borderBottom: "2px solid #3b82f6",
+  },
+  content: {
+    maxWidth: 960,
+    margin: "0 auto",
+    padding: "32px 24px",
+  },
+  sectionTitle: {
+    fontSize: 22, fontWeight: 800, color: "#f1f5f9", margin: "0 0 6px",
+  },
+  sectionSubtitle: {
+    fontSize: 14, color: "#64748b", margin: "0 0 24px",
+  },
+  groupLabel: {
+    fontSize: 12, fontWeight: 700, color: "#475569", letterSpacing: "0.08em",
+    textTransform: "uppercase", marginBottom: 10,
+  },
+  card: {
+    background: "#111827",
+    border: "1px solid #1f2d45",
+    borderRadius: 12,
+    padding: "18px 20px",
+    marginBottom: 16,
+  },
+  input: {
+    flex: 1,
+    padding: "10px 14px",
+    background: "#111827",
+    border: "1px solid #1f2d45",
+    borderRadius: 8,
+    color: "#f1f5f9",
+    fontSize: 14,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: "none",
+  },
+  btnPrimary: {
+    padding: "10px 20px",
+    background: "#2563eb",
+    border: "none",
+    borderRadius: 8,
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: 700,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  btnGreen: {
+    padding: "8px 14px",
+    background: "#064e3b",
+    border: "1px solid #059669",
+    borderRadius: 8,
+    color: "#34d399",
+    fontSize: 13,
+    fontWeight: 700,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  btnBlue: {
+    padding: "8px 14px",
+    background: "#1e3a5f",
+    border: "1px solid #2563eb",
+    borderRadius: 8,
+    color: "#60a5fa",
+    fontSize: 13,
+    fontWeight: 700,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  btnPurple: {
+    padding: "8px 14px",
+    background: "#2d1b69",
+    border: "1px solid #7c3aed",
+    borderRadius: 8,
+    color: "#a78bfa",
+    fontSize: 13,
+    fontWeight: 700,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  btnRed: {
+    padding: "8px 14px",
+    background: "#450a0a",
+    border: "1px solid #dc2626",
+    borderRadius: 8,
+    color: "#f87171",
+    fontSize: 13,
+    fontWeight: 700,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  logoutBtn: {
+    padding: "8px 18px",
+    background: "transparent",
+    border: "1px solid #1f2d45",
+    borderRadius: 8,
+    color: "#94a3b8",
+    fontSize: 13,
+    fontWeight: 600,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+  },
+  alertError: {
+    background: "#450a0a",
+    border: "1px solid #dc2626",
+    borderRadius: 8,
+    padding: "10px 14px",
+    color: "#f87171",
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  alertSuccess: {
+    background: "#064e3b",
+    border: "1px solid #059669",
+    borderRadius: 8,
+    padding: "10px 14px",
+    color: "#34d399",
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  userName: {
+    fontSize: 17, fontWeight: 700, color: "#f1f5f9",
+  },
+  userEmail: {
+    fontSize: 13, color: "#64748b", marginBottom: 4,
+  },
+  userMeta: {
+    fontSize: 12, color: "#475569",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: 14,
+  },
+  th: {
+    textAlign: "left",
+    padding: "10px 14px",
+    background: "#111827",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    borderBottom: "1px solid #1f2d45",
+  },
+  tr: {
+    borderBottom: "1px solid #1a2535",
+  },
+  td: {
+    padding: "12px 14px",
+    verticalAlign: "middle",
+    color: "#94a3b8",
+  },
+  loading: {
+    padding: "60px 0",
+    textAlign: "center",
+    color: "#475569",
+    fontSize: 14,
+  },
+  empty: {
+    padding: "60px 0",
+    textAlign: "center",
+    color: "#475569",
+    fontSize: 14,
+  },
+};
