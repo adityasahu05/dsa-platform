@@ -439,7 +439,7 @@ app.add_middleware(
         "http://localhost:5173",
         "https://testslashcoder.netlify.app",
         "https://thriving-hamster-86353b.netlify.app",
-        "https://inquisitive-palates-5ecd40.netlify.app", 
+        "https://inquisitive-paletas-5ecd40.netlify.app",  # correct
         "https://test.slashcoder.in",
     ],
     allow_credentials=True,
