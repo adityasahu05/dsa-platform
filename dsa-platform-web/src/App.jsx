@@ -400,11 +400,14 @@
 // export default App;
 import { useState } from 'react';
 import axios from 'axios';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import TestAttempt from './components/TestAttempt';
 import TeacherDashboard from './components/TeacherDashboard';
-import StudentTestList from './components/StudentTestList';
+import StudentDashboard from './pages/StudentDashboard';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
 import AuthPage from './components/AuthPage';
+import PracticeProblems from './pages/PracticeProblems';
+import PracticeSolve from './pages/PracticeSolve';
 import './App.css';
 
 // ✅ Axios interceptor — attaches JWT to every request automatically
@@ -427,12 +430,9 @@ function App() {
     }
   });
 
-  const [selectedTest, setSelectedTest] = useState(null);
-
   const handleLogin = (newToken, newUser) => {
     setToken(newToken);
     setUser(newUser);
-    setSelectedTest(null);
   };
 
   const handleLogout = () => {
@@ -440,15 +440,14 @@ function App() {
     localStorage.removeItem('user');
     setToken(null);
     setUser(null);
-    setSelectedTest(null);
   };
 
-  // Not logged in → show auth page
+  // Not logged in
   if (!token || !user) {
     return <AuthPage onLogin={handleLogin} />;
   }
 
-  // Logged in as SUPERADMIN
+  // Superadmin
   if (user.role === 'superadmin') {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#0b1120' }}>
@@ -458,7 +457,7 @@ function App() {
     );
   }
 
-  // Logged in as TEACHER
+  // Teacher
   if (user.role === 'teacher') {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -468,24 +467,43 @@ function App() {
     );
   }
 
-  // Logged in as STUDENT (default)
+  // Student — uses React Router for practice + test navigation
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
-      {!selectedTest && <TopBar user={user} onLogout={handleLogout} />}
-      {selectedTest ? (
-        <TestAttempt
-          test={selectedTest}
-          token={token}
-          user={user}
-          onBack={() => setSelectedTest(null)}
+    <BrowserRouter>
+      <Routes>
+        {/* Main dashboard */}
+        <Route
+          path="/"
+          element={
+            <div style={{ minHeight: '100vh', backgroundColor: '#0b0f19' }}>
+              <TopBar user={user} onLogout={handleLogout} />
+              <StudentDashboard />
+            </div>
+          }
         />
-      ) : (
-        <StudentTestList
-          token={token}
-          onSelectTest={setSelectedTest}
+
+        {/* Test attempt — navigated to from StudentDashboard */}
+        <Route
+          path="/test"
+          element={<TestAttempt token={token} user={user} onBack={() => window.history.back()} />}
         />
-      )}
-    </div>
+
+        {/* Practice routes — already used by PracticeProblems + PracticeSolve */}
+        <Route path="/practice/*" element={<PracticeRouter />} />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+function PracticeRouter() {
+  return (
+    <Routes>
+      <Route path=":language" element={<PracticeProblems />} />
+      <Route path=":language/:pid" element={<PracticeSolve />} />
+    </Routes>
   );
 }
 
@@ -498,7 +516,7 @@ const roleMeta = {
 
 function TopBar({ user, onLogout }) {
   const meta = roleMeta[user.role] || roleMeta.student;
-  const isDark = user.role === 'superadmin';
+  const isDark = user.role === 'superadmin' || user.role === 'student';
 
   return (
     <div style={{
@@ -508,7 +526,6 @@ function TopBar({ user, onLogout }) {
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       height: '52px',
     }}>
-      {/* Left: Logo */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         <div style={{
           width: '28px', height: '28px',
@@ -528,7 +545,6 @@ function TopBar({ user, onLogout }) {
         </span>
       </div>
 
-      {/* Right: User info + logout */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         <span style={{ fontSize: '14px', color: isDark ? '#94a3b8' : '#666' }}>
           {user.name}
@@ -552,5 +568,3 @@ function TopBar({ user, onLogout }) {
 }
 
 export default App;
-
-
