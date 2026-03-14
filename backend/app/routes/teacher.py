@@ -2830,4 +2830,4 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
         "submitted_at": datetime.utcnow().isoformat(),
     }
     db.reference(f"/submissions/{sub_id}").set(submission)
-    return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score}
+    return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score} 
