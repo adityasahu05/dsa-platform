@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from typing import Optional
 import httpx
 import asyncio
-from routes.practice import router as practice_router
-app.include_router(practice_router)
+
+# app.include_router(practice_router)
 
 router = APIRouter()
 
