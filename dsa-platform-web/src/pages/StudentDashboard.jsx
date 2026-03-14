@@ -82,7 +82,7 @@ export default function StudentDashboard() {
       const res = await fetch(`${API_BASE}/api/teacher/student/tests`);
       const tests = await res.json();
       const found = Array.isArray(tests)
-        ? tests.find((t) => t.test_id === code || t.id === code)
+        ? tests.find((t) => t.assessment_id === code || t.id === code)
         : null;
       if (found) {
         setTestPreview(found);
