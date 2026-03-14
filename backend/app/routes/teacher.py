@@ -2791,28 +2791,23 @@ def get_available_tests():
     return result
 
 
-@router.get("/student/test/{test_id}/questions", tags=["student"])
-def get_test_questions_for_student(test_id: str):
-    test = db.reference(f"/tests/{test_id}").get()
-    if not test:
-        raise HTTPException(status_code=404, detail="Test not found")
+@router.get("/student/tests", tags=["student"])
+def get_available_tests():
+    all_tests = db.reference("/tests").get() or {}
     all_questions = db.reference("/questions").get() or {}
-    all_tcs = db.reference("/test_cases").get() or {}
     result = []
-    for qid, q in all_questions.items():
-        if q.get("test_id") == test_id:
-            test_cases = [
-                {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
-                 "points": tc.get("points", 1)}
-                for tcid, tc in all_tcs.items()
-                if tc.get("question_id") == qid and not tc.get("is_hidden", False)
-            ]
+    for tid, t in all_tests.items():
+        if t.get("is_active"):
+            q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
             result.append({
-                "id": qid, "title": q.get("title"), "description": q.get("description"),
-                "difficulty": q.get("difficulty"), "topic": q.get("topic"),
-                "points": q.get("points", 10), "time_limit_ms": q.get("time_limit_ms", 2000),
-                "allowed_languages": parse_languages(test.get("allowed_languages", "python")),
-                "test_cases": test_cases
+                "id": tid,
+                "title": t.get("title"),
+                "description": t.get("description"),
+                "duration_minutes": t.get("duration_minutes", 60),
+                "question_count": q_count,
+                "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
+                "assessment_id": t.get("assessment_id", ""),  # ← ADD THIS
+                "created_at": t.get("created_at")
             })
     return result
 
