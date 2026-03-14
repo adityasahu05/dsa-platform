@@ -222,7 +222,7 @@ import asyncio
 
 router = APIRouter()
 
-from practice_problems import PRACTICE_PROBLEMS
+from app.routes.practice_problems import PRACTICE_PROBLEMS
 
 JUDGE0_URL = "https://ce.judge0.com/submissions?base64_encoded=false&wait=true"  # ← replace with your Judge0 URL
 
