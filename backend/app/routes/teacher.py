@@ -2450,7 +2450,7 @@ API endpoints for teacher operations — Firebase Realtime Database
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from firebase_admin import db
 from app.routes.auth import require_teacher, get_current_user
 import random
@@ -2529,6 +2529,7 @@ class SubmitRequest(BaseModel):
     score: float
     passed: int
     total: int
+    auto_submit: Optional[bool] = False
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -2550,6 +2551,41 @@ def parse_date(date_str: Optional[str]):
         return datetime.fromisoformat(date_str.replace('Z', '+00:00')).isoformat()
     except Exception:
         return None
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def parse_iso_ts(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def get_test_duration_seconds(test: dict) -> int:
+    try:
+        minutes = int(test.get("duration_minutes", 60))
+    except Exception:
+        minutes = 60
+    return max(1, minutes * 60)
+
+def get_or_create_attempt(test_id: str, student_id: str) -> dict:
+    attempt_ref = db.reference(f"/attempts/{test_id}/{student_id}")
+    attempt = attempt_ref.get() or {}
+    started_at = attempt.get("started_at")
+    if not started_at:
+        started_at = utcnow_iso()
+        attempt = {"started_at": started_at}
+        attempt_ref.set(attempt)
+    return attempt
+
+def is_attempt_expired(attempt: dict, duration_seconds: int) -> bool:
+    started = parse_iso_ts(attempt.get("started_at"))
+    if not started:
+        return False
+    now = datetime.now(timezone.utc)
+    return (now - started).total_seconds() > duration_seconds
 
 def format_test(test_id: str, test: dict) -> dict:
     return {
@@ -2880,11 +2916,84 @@ def lookup_test(code: str):
     raise HTTPException(status_code=404, detail="Test not found")
 
 
+@router.get("/student/test/{test_id}/submissions", tags=["student"])
+def get_student_test_submissions(test_id: str, current_user: dict = Depends(get_current_user)):
+    student_id = current_user["id"]
+    all_subs = db.reference("/submissions").get() or {}
+    result = []
+    for sub_id, sub in all_subs.items():
+        if sub.get("student_id") != student_id:
+            continue
+        if sub.get("test_id") != test_id:
+            continue
+        result.append({
+            "submission_id": sub_id,
+            "question_id": sub.get("question_id"),
+            "test_id": sub.get("test_id"),
+            "language": sub.get("language"),
+            "code": sub.get("code"),
+            "score": sub.get("score", 0),
+            "passed": sub.get("passed", 0),
+            "total": sub.get("total", 0),
+            "submitted_at": sub.get("submitted_at"),
+        })
+    result.sort(key=lambda x: x.get("submitted_at") or "", reverse=True)
+    return result
+
+
+@router.post("/student/test/{test_id}/start", tags=["student"])
+def start_test_attempt(test_id: str, current_user: dict = Depends(get_current_user)):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    attempt = get_or_create_attempt(test_id, current_user["id"])
+    duration_seconds = get_test_duration_seconds(test)
+    started = parse_iso_ts(attempt.get("started_at"))
+    now = datetime.now(timezone.utc)
+    elapsed = (now - started).total_seconds() if started else 0
+    remaining = max(0, int(duration_seconds - elapsed))
+    return {
+        "test_id": test_id,
+        "started_at": attempt.get("started_at"),
+        "duration_seconds": duration_seconds,
+        "remaining_seconds": remaining,
+        "expired": remaining <= 0,
+    }
+
+
 @router.post("/student/submit", tags=["student"])
 def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_current_user)):
     question = db.reference(f"/questions/{data.question_id}").get()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
+    if question.get("test_id") != data.test_id:
+        raise HTTPException(status_code=400, detail="Question does not belong to this test")
+
+    test = db.reference(f"/tests/{data.test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    # Enforce one submission per question per student
+    all_subs = db.reference("/submissions").get() or {}
+    for sub in all_subs.values():
+        if sub.get("student_id") == current_user["id"] and sub.get("question_id") == data.question_id and sub.get("test_id") == data.test_id:
+            raise HTTPException(status_code=409, detail="Already submitted for this question")
+
+    # Enforce global test timer (allow small grace for auto-submit)
+    attempt = get_or_create_attempt(data.test_id, current_user["id"])
+    duration_seconds = get_test_duration_seconds(test)
+    if is_attempt_expired(attempt, duration_seconds):
+        if not data.auto_submit:
+            raise HTTPException(status_code=403, detail="Test time is over")
+        # Allow auto-submit within a small grace window after expiry
+        started = parse_iso_ts(attempt.get("started_at"))
+        if not started:
+            raise HTTPException(status_code=403, detail="Test time is over")
+        now = datetime.now(timezone.utc)
+        end_time = started + timedelta(seconds=duration_seconds)
+        if (now - end_time).total_seconds() > 5:
+            raise HTTPException(status_code=403, detail="Test time is over")
+
     sub_id = str(uuid.uuid4())
     submission = {
         "student_id": current_user["id"],
@@ -2895,6 +3004,7 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
         "score": data.score,
         "passed": data.passed,
         "total": data.total,
+        "auto_submit": bool(data.auto_submit),
         "submitted_at": datetime.utcnow().isoformat(),
     }
     db.reference(f"/submissions/{sub_id}").set(submission)
