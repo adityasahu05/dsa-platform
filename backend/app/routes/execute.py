@@ -9,13 +9,15 @@ import concurrent.futures
 router = APIRouter()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JUDGE0_URL = os.getenv("JUDGE0_URL", "https://judge0-production-8e51.up.railway.app")
-JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTHN_TOKEN", "mysecrettoken123")
+JUDGE0_URL = os.getenv("JUDGE0_URL", "https://ce.judge0.com")
+JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTH_TOKEN", "")
 
 HEADERS = {
     "Content-Type": "application/json",
-    "X-Auth-Token": JUDGE0_AUTH_TOKEN,
 }
+
+if JUDGE0_AUTH_TOKEN:
+    HEADERS["X-Auth-Token"] = JUDGE0_AUTH_TOKEN
 
 # ── Judge0 Language IDs ───────────────────────────────────────────────────────
 LANGUAGE_IDS = {
