@@ -129,7 +129,8 @@ def parse_result(judge0_result: dict, test_case: TestCase) -> dict:
     elif status_id == 5:
         error = "Time Limit Exceeded"
     elif status_id == 11:
-        error = "Memory Limit Exceeded"
+        # Judge0 status 11 is Runtime Error (NZEC), not MLE.
+        error = f"Runtime Error: {stderr or status_desc}"
     elif status_id in (12, 13, 14, 15):
         error = f"Runtime Error: {stderr or status_desc}"
     elif status_id not in (3,):
