@@ -9,7 +9,7 @@ import concurrent.futures
 router = APIRouter()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JUDGE0_URL = os.getenv("JUDGE0_URL", "https://ce.judge0.com")
+JUDGE0_URL = "https://ce.judge0.com"
 JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTH_TOKEN", "")
 
 HEADERS = {
@@ -91,15 +91,16 @@ def submit_token(code: str, language_id: int, stdin: str,
         raise HTTPException(status_code=502, detail="Judge0 did not return a submission token")
     return token
 
-def poll_token(token: str, max_wait: int = 30) -> dict:
+def poll_token(token: str, max_wait_seconds: int = 30, poll_interval: float = 0.4) -> dict:
     """Poll a single Judge0 token until it finishes. Returns the result dict."""
-    for _ in range(max_wait):
-        time.sleep(1)
+    start = time.time()
+    while time.time() - start < max_wait_seconds:
+        time.sleep(poll_interval)
         try:
             resp = requests.get(
                 f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
                 headers=HEADERS,
-                timeout=10,
+                timeout=15,
             )
         except Exception:
             continue
@@ -188,12 +189,12 @@ async def execute_code(request: ExecuteRequest):
             tokens.append(future.result())  # raises HTTPException on failure
 
     # ── Step 2: Brief warmup sleep (once, not per test case) ───────────────────
-    time.sleep(2)
+    time.sleep(0.3)
 
     # ── Step 3: Poll ALL tokens in parallel ────────────────────────────────────
     judge0_results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        poll_futures = [executor.submit(poll_token, token, 30) for token in tokens]
+        poll_futures = [executor.submit(poll_token, token, 30, 0.4) for token in tokens]
         for future in poll_futures:
             judge0_results.append(future.result())  # raises HTTPException on timeout
 
