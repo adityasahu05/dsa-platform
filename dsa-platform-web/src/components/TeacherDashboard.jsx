@@ -628,7 +628,7 @@
 
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Clock, Eye, X, Copy, Tag, Lock, Globe, ToggleLeft, ToggleRight, Pencil, Check } from 'lucide-react';
+import { Plus, Search, Clock, Eye, X, Copy, Tag, Lock, Globe, ToggleLeft, ToggleRight, Pencil, Check, Trash2 } from 'lucide-react';
 import { apiClient } from '../services/api';
 import TestDetailsPage from './TestDetailsPage';
 import QuestionsModal from './QuestionsModal';
@@ -871,6 +871,19 @@ function TeacherDashboard() {
     } catch (error) { console.error('Error fetching tests:', error); }
   };
 
+  const handleDeleteTest = async (test, e) => {
+    if (e) e.stopPropagation();
+    const ok = window.confirm(`Delete test "${test.title}"? This will remove all questions, test cases, and submissions.`);
+    if (!ok) return;
+    try {
+      await apiClient.delete(`${API_URL}/tests/${test.id}`);
+      fetchTests();
+    } catch (error) {
+      console.error('Error deleting test:', error);
+      alert('Failed to delete test. Please try again.');
+    }
+  };
+
   const handleTestUpdate = (updated) => {
     setTests(prev => prev.map(t => t.id === updated.id ? updated : t));
     if (testInfoModal?.id === updated.id) setTestInfoModal(updated);
@@ -1001,6 +1014,10 @@ function TeacherDashboard() {
                   <button onClick={e => { e.stopPropagation(); setSelectedTestForDetails(test); }}
                     style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#666', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
                     Open
+                  </button>
+                  <button onClick={e => handleDeleteTest(test, e)}
+                    style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#F44336', border: '1px solid #F44336', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Trash2 size={12} /> Remove
                   </button>
                 </div>
               </div>
