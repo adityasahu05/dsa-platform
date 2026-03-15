@@ -1900,14 +1900,15 @@
 
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X } from 'lucide-react';
-import axios from 'axios';
+import { apiClient } from '../services/api';
 
-const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/teacher';
+const API_URL = '/api/teacher';
 
 function TestDetailsPage({ test, onBack, onAddQuestion }) {
   const [questions, setQuestions] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [detailedAnalytics, setDetailedAnalytics] = useState(null);
   const [activeTab, setActiveTab] = useState('questions');
   const [loading, setLoading] = useState(true);
   const [linkStatus, setLinkStatus] = useState('');
@@ -1928,20 +1929,27 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
   const fetchTestData = async () => {
     try {
       setLoading(true);
-      const questionsRes = await axios.get(`${API_URL}/test/${test.id}/questions`);
+      const questionsRes = await apiClient.get(`${API_URL}/test/${test.id}/questions`);
       setQuestions(questionsRes.data);
       
-      const submissionsRes = await axios.get(`${API_URL}/submissions`);
+      const submissionsRes = await apiClient.get(`${API_URL}/submissions`);
       const testSubmissions = submissionsRes.data.filter(sub => 
         questionsRes.data.some(q => q.id === sub.question_id)
       );
       setSubmissions(testSubmissions);
       
       try {
-        const analyticsRes = await axios.get(`${API_URL}/analytics/test/${test.id}`);
+        const analyticsRes = await apiClient.get(`${API_URL}/analytics/test/${test.id}`);
         setAnalytics(analyticsRes.data);
       } catch {
         console.log('Analytics not available');
+      }
+
+      try {
+        const detailedRes = await apiClient.get(`${API_URL}/analytics/test/${test.id}/detailed`);
+        setDetailedAnalytics(detailedRes.data);
+      } catch {
+        console.log('Detailed analytics not available');
       }
     } catch (error) {
       console.error('Error fetching test data:', error);
@@ -1954,7 +1962,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
     if (!deletingQuestion) return;
     setDeleteLoading(true);
     try {
-      await axios.delete(`${API_URL}/questions/${deletingQuestion.id}`);
+      await apiClient.delete(`${API_URL}/questions/${deletingQuestion.id}`);
       setQuestions(prev => prev.filter(q => q.id !== deletingQuestion.id));
       setDeletingQuestion(null);
     } catch (error) {
@@ -1968,6 +1976,21 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
   const getDifficultyColor = (difficulty) => {
     const colors = { EASY: '#4caf50', MEDIUM: '#ff9800', HARD: '#f44336' };
     return colors[difficulty] || '#999';
+  };
+
+  const formatDateTime = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-IN');
+  };
+
+  const formatDuration = (seconds) => {
+    if (seconds === null || seconds === undefined) return '—';
+    const total = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}m ${s}s`;
   };
 
   const linkCode = test?.assessment_id || test?.id;
@@ -2252,6 +2275,77 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                   ))}
                 </div>
 
+                <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '20px', marginBottom: '24px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Detailed Student Analytics</h3>
+                  {!detailedAnalytics || !Array.isArray(detailedAnalytics.students) ? (
+                    <div style={{ color: '#999', fontSize: '14px' }}>Detailed analytics not available.</div>
+                  ) : detailedAnalytics.students.length === 0 ? (
+                    <div style={{ color: '#999', fontSize: '14px' }}>No student attempts yet.</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+                        <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                          <tr>
+                            {[
+                              'STUDENT',
+                              'EMAIL',
+                              'TEST START',
+                              'OVERALL SUBMITTED',
+                              'OVERALL TIME',
+                              'OVERALL SCORE'
+                            ].map(h => (
+                              <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
+                                {h}
+                              </th>
+                            ))}
+                            {(detailedAnalytics.questions || questions).map((q, i) => (
+                              <th key={q.id || i} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
+                                Q{i + 1} END
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailedAnalytics.students.map((s) => {
+                            const qList = detailedAnalytics.questions || questions;
+                            return (
+                              <tr key={s.student_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                <td style={{ padding: '12px 16px', fontSize: '14px', fontWeight: 600 }}>{s.student_name}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_email}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.started_at)}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.overall_submitted_at)}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDuration(s.overall_submission_time_seconds)}</td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span style={{
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    backgroundColor: s.overall_score >= 70 ? '#E8F5E9' : s.overall_score >= 40 ? '#FFF3E0' : '#FFEBEE',
+                                    color: s.overall_score >= 70 ? '#4CAF50' : s.overall_score >= 40 ? '#FF9800' : '#F44336'
+                                  }}>
+                                    {s.overall_score}%
+                                  </span>
+                                </td>
+                                {qList.map((q, i) => {
+                                  const qEntry = s.questions?.[q.id];
+                                  const submittedAt = qEntry?.submitted_at;
+                                  const score = qEntry?.score;
+                                  return (
+                                    <td key={q.id || i} style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>
+                                      {submittedAt ? `${formatDateTime(submittedAt)}${score !== undefined ? ` (${score}%)` : ''}` : '—'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
                 <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '20px' }}>
                   <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Question-wise Performance</h3>
                   {questions.map((question, index) => {
@@ -2443,18 +2537,18 @@ function EditQuestionModal({ question, onClose, onSuccess }) {
     setSaving(true);
     try {
       // 1. Update question fields
-      const response = await axios.put(`${API_URL}/questions/${question.id}`, formData);
+      const response = await apiClient.put(`${API_URL}/questions/${question.id}`, formData);
 
       // 2. Delete test cases marked as deleted
       const toDelete = testCases.filter(tc => tc._status === 'deleted' && tc.id);
       for (const tc of toDelete) {
-        await axios.delete(`${API_URL}/test-cases/${tc.id}`);
+        await apiClient.delete(`${API_URL}/test-cases/${tc.id}`);
       }
 
       // 3. Update existing test cases that were modified
       const toUpdate = testCases.filter(tc => tc._status === 'existing' && tc.id);
       for (const tc of toUpdate) {
-        await axios.put(`${API_URL}/test-cases/${tc.id}`, {
+        await apiClient.put(`${API_URL}/test-cases/${tc.id}`, {
           input: tc.input,
           expected_output: tc.expected_output,
           is_hidden: tc.is_hidden,
@@ -2465,7 +2559,7 @@ function EditQuestionModal({ question, onClose, onSuccess }) {
       // 4. Create new test cases
       const toCreate = testCases.filter(tc => tc._status === 'new');
       for (const tc of toCreate) {
-        await axios.post(`${API_URL}/test-cases`, {
+        await apiClient.post(`${API_URL}/test-cases`, {
           question_id: question.id,
           input: tc.input,
           expected_output: tc.expected_output,
