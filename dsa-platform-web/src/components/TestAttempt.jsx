@@ -485,6 +485,8 @@ function TestAttempt({ test, onBack }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [submitSuccess, setSubmitSuccess] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timeUp, setTimeUp] = useState(false);
 
   useEffect(() => {
     async function fetchQuestions() {
@@ -507,6 +509,25 @@ function TestAttempt({ test, onBack }) {
     }
     if (test?.id) fetchQuestions();
   }, [test?.id]);
+
+  useEffect(() => {
+    if (!test?.duration_minutes) return;
+    const totalSeconds = Math.max(1, Math.floor(test.duration_minutes * 60));
+    setTimeLeft(totalSeconds);
+    setTimeUp(false);
+    const id = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearInterval(id);
+          setTimeUp(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [test?.duration_minutes, test?.id]);
 
   useEffect(() => {
     setCode(DEFAULT_CODE[language] || DEFAULT_CODE.python);
@@ -606,36 +627,43 @@ function TestAttempt({ test, onBack }) {
     return { icon: <XCircle size={16} color="#F44336" />, color: '#F44336', label: 'FAIL' };
   };
 
-  const isBusy = isExecuting || isSubmitting;
+  const isBusy = isExecuting || isSubmitting || timeUp;
+
+  const formatTime = (seconds) => {
+    if (seconds === null || seconds === undefined) return '--:--';
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
   if (isLoadingQuestions) return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', sans-serif" }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ width: '32px', height: '32px', border: '3px solid #e0e0e0', borderTopColor: '#2196F3', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
-        <p style={{ color: '#999', fontSize: '14px' }}>Loading questions...</p>
+    <div style={{ minHeight: '100vh', background: '#0b0f19', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Sora', 'Segoe UI', sans-serif", color: '#e5e7eb' }}>
+      <div style={{ textAlign: 'center', background: 'rgba(15,23,42,0.9)', border: '1px solid #1f2937', borderRadius: '16px', padding: '32px 28px' }}>
+        <div style={{ width: '32px', height: '32px', border: '3px solid #1f2937', borderTopColor: '#38bdf8', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+        <p style={{ color: 'rgba(226,232,240,0.8)', fontSize: '14px' }}>Loading questions...</p>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     </div>
   );
 
   if (loadError) return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', sans-serif" }}>
-      <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '32px', textAlign: 'center', maxWidth: '400px' }}>
-        <AlertCircle size={48} color="#F44336" style={{ margin: '0 auto 16px', display: 'block' }} />
-        <h2 style={{ color: '#333', fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Failed to Load Test</h2>
-        <p style={{ color: '#666', fontSize: '14px', marginBottom: '24px' }}>{loadError}</p>
-        <button onClick={onBack} style={{ background: '#2196F3', color: '#fff', border: 'none', borderRadius: '4px', padding: '8px 20px', fontSize: '14px', cursor: 'pointer' }}>Go Back</button>
+    <div style={{ minHeight: '100vh', background: '#0b0f19', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Sora', 'Segoe UI', sans-serif", color: '#e5e7eb' }}>
+      <div style={{ background: 'rgba(15,23,42,0.95)', border: '1px solid #1f2937', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '440px' }}>
+        <AlertCircle size={48} color="#f87171" style={{ margin: '0 auto 16px', display: 'block' }} />
+        <h2 style={{ color: '#e5e7eb', fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Failed to Load Test</h2>
+        <p style={{ color: 'rgba(226,232,240,0.7)', fontSize: '14px', marginBottom: '24px' }}>{loadError}</p>
+        <button onClick={onBack} style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>Go Back</button>
       </div>
     </div>
   );
 
   if (questions.length === 0) return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', sans-serif" }}>
-      <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '32px', textAlign: 'center', maxWidth: '400px' }}>
-        <BookOpen size={48} color="#ccc" style={{ margin: '0 auto 16px', display: 'block' }} />
-        <h2 style={{ color: '#333', fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>No Questions Found</h2>
-        <p style={{ color: '#666', fontSize: '14px', marginBottom: '24px' }}>This test doesn't have any questions yet.</p>
-        <button onClick={onBack} style={{ background: '#2196F3', color: '#fff', border: 'none', borderRadius: '4px', padding: '8px 20px', fontSize: '14px', cursor: 'pointer' }}>Go Back</button>
+    <div style={{ minHeight: '100vh', background: '#0b0f19', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Sora', 'Segoe UI', sans-serif", color: '#e5e7eb' }}>
+      <div style={{ background: 'rgba(15,23,42,0.95)', border: '1px solid #1f2937', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '440px' }}>
+        <BookOpen size={48} color="#94a3b8" style={{ margin: '0 auto 16px', display: 'block' }} />
+        <h2 style={{ color: '#e5e7eb', fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>No Questions Found</h2>
+        <p style={{ color: 'rgba(226,232,240,0.7)', fontSize: '14px', marginBottom: '24px' }}>This test doesn't have any questions yet.</p>
+        <button onClick={onBack} style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>Go Back</button>
       </div>
     </div>
   );
@@ -643,19 +671,19 @@ function TestAttempt({ test, onBack }) {
   const diffStyle = getDifficultyStyle(currentQuestion?.difficulty);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', fontFamily: "'Segoe UI', sans-serif", display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', background: '#0b0f19', fontFamily: "'Sora', 'Segoe UI', sans-serif", display: 'flex', flexDirection: 'column', color: '#e5e7eb' }}>
 
       {/* Top Toolbar */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #e0e0e0', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+      <div style={{ background: 'rgba(15,23,42,0.95)', borderBottom: '1px solid #1f2937', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {onBack && (
-            <button onClick={onBack} style={{ background: 'transparent', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '6px 12px', color: '#666', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px' }}>
+            <button onClick={onBack} style={{ background: 'transparent', border: '1px solid #1f2937', borderRadius: '8px', padding: '6px 12px', color: 'rgba(226,232,240,0.85)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px' }}>
               <ChevronLeft size={14} /> Back
             </button>
           )}
-          <div style={{ borderLeft: '1px solid #e0e0e0', paddingLeft: '12px' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>{test?.title}</div>
-            <div style={{ fontSize: '12px', color: '#999', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ borderLeft: '1px solid #1f2937', paddingLeft: '12px' }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#e5e7eb' }}>{test?.title}</div>
+            <div style={{ fontSize: '12px', color: 'rgba(226,232,240,0.6)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Clock size={12} /> {test?.duration_minutes} mins
             </div>
           </div>
@@ -665,14 +693,14 @@ function TestAttempt({ test, onBack }) {
           {questions.map((q, i) => {
             const score = questionResults[q.id];
             const isActive = i === currentQuestionIndex;
-            let bg = '#e0e0e0', color = '#666';
-            if (isActive) { bg = '#2196F3'; color = '#fff'; }
-            else if (score === 100) { bg = '#4CAF50'; color = '#fff'; }
-            else if (score > 0) { bg = '#FF9800'; color = '#fff'; }
-            else if (score === 0 && score !== undefined) { bg = '#F44336'; color = '#fff'; }
+            let bg = '#1f2937', color = '#cbd5f5';
+            if (isActive) { bg = '#2563eb'; color = '#fff'; }
+            else if (score === 100) { bg = '#22c55e'; color = '#fff'; }
+            else if (score > 0) { bg = '#f59e0b'; color = '#111827'; }
+            else if (score === 0 && score !== undefined) { bg = '#ef4444'; color = '#fff'; }
             return (
               <button key={q.id} onClick={() => setCurrentQuestionIndex(i)} style={{
-                width: '24px', height: '24px', borderRadius: '4px', background: bg, color,
+                width: '24px', height: '24px', borderRadius: '6px', background: bg, color,
                 border: 'none', fontSize: '12px', fontWeight: '600', cursor: 'pointer'
               }}>{i + 1}</button>
             );
@@ -680,25 +708,40 @@ function TestAttempt({ test, onBack }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {timeLeft !== null && (
+            <div style={{
+              padding: '6px 10px',
+              borderRadius: '8px',
+              border: '1px solid #1f2937',
+              background: timeUp ? 'rgba(248,113,113,0.2)' : 'rgba(15,23,42,0.7)',
+              color: timeUp ? '#fecaca' : '#e5e7eb',
+              fontSize: '12px',
+              fontWeight: 600,
+              minWidth: '70px',
+              textAlign: 'center'
+            }}>
+              {formatTime(timeLeft)}
+            </div>
+          )}
           <select value={language} onChange={(e) => setLanguage(e.target.value)} disabled={isBusy}
-            style={{ background: '#fff', color: '#333', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '6px 10px', fontSize: '13px', cursor: 'pointer' }}>
+            style={{ background: '#0f172a', color: '#e5e7eb', border: '1px solid #1f2937', borderRadius: '8px', padding: '6px 10px', fontSize: '13px', cursor: 'pointer' }}>
             {allowedLanguages.map(lang => (
               <option key={lang} value={lang}>{LANGUAGE_LABELS[lang] || lang}</option>
             ))}
           </select>
 
           <button onClick={() => { setCode(DEFAULT_CODE[language] || ''); setResult(null); setError(null); setSubmitSuccess(null); }}
-            style={{ background: '#fff', color: '#666', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            style={{ background: '#0f172a', color: '#cbd5f5', border: '1px solid #1f2937', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <RotateCcw size={13} /> Reset
           </button>
 
           <button onClick={handleExecute} disabled={isBusy}
-            style={{ background: isBusy ? '#ccc' : '#F44336', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 16px', fontSize: '13px', fontWeight: '500', cursor: isBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            style={{ background: isBusy ? '#1f2937' : '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 16px', fontSize: '13px', fontWeight: '600', cursor: isBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {isExecuting ? <><Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> Running...</> : <><Play size={14} /> Run</>}
           </button>
 
           <button onClick={handleSubmit} disabled={isBusy}
-            style={{ background: isBusy ? '#ccc' : '#2196F3', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 16px', fontSize: '13px', fontWeight: '500', cursor: isBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            style={{ background: isBusy ? '#1f2937' : '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 16px', fontSize: '13px', fontWeight: '600', cursor: isBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {isSubmitting ? <><Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> Submitting...</> : 'Submit'}
           </button>
         </div>
@@ -708,16 +751,16 @@ function TestAttempt({ test, onBack }) {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
         {/* LEFT: Problem */}
-        <div style={{ width: '45%', minWidth: '320px', maxWidth: '550px', background: '#fff', borderRight: '1px solid #e0e0e0', overflowY: 'auto', padding: '24px' }}>
+        <div style={{ width: '45%', minWidth: '320px', maxWidth: '550px', background: 'rgba(15,23,42,0.95)', borderRight: '1px solid #1f2937', overflowY: 'auto', padding: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <span style={{ fontSize: '13px', color: '#999', fontWeight: '500' }}>Question {currentQuestionIndex + 1} / {questions.length}</span>
+            <span style={{ fontSize: '13px', color: 'rgba(226,232,240,0.6)', fontWeight: '500' }}>Question {currentQuestionIndex + 1} / {questions.length}</span>
             <div style={{ display: 'flex', gap: '6px' }}>
               <button onClick={() => setCurrentQuestionIndex(i => Math.max(0, i - 1))} disabled={currentQuestionIndex === 0}
-                style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '4px 8px', color: currentQuestionIndex === 0 ? '#ccc' : '#666', cursor: currentQuestionIndex === 0 ? 'not-allowed' : 'pointer' }}>
+                style={{ background: '#0f172a', border: '1px solid #1f2937', borderRadius: '8px', padding: '4px 8px', color: currentQuestionIndex === 0 ? '#374151' : '#cbd5f5', cursor: currentQuestionIndex === 0 ? 'not-allowed' : 'pointer' }}>
                 <ChevronLeft size={14} />
               </button>
               <button onClick={() => setCurrentQuestionIndex(i => Math.min(questions.length - 1, i + 1))} disabled={currentQuestionIndex === questions.length - 1}
-                style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '4px 8px', color: currentQuestionIndex === questions.length - 1 ? '#ccc' : '#666', cursor: currentQuestionIndex === questions.length - 1 ? 'not-allowed' : 'pointer' }}>
+                style={{ background: '#0f172a', border: '1px solid #1f2937', borderRadius: '8px', padding: '4px 8px', color: currentQuestionIndex === questions.length - 1 ? '#374151' : '#cbd5f5', cursor: currentQuestionIndex === questions.length - 1 ? 'not-allowed' : 'pointer' }}>
                 <ChevronRight size={14} />
               </button>
             </div>
@@ -725,35 +768,35 @@ function TestAttempt({ test, onBack }) {
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
             {currentQuestion?.difficulty && (
-              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '4px', background: diffStyle.bg, color: diffStyle.color }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '999px', background: diffStyle.bg, color: diffStyle.color }}>
                 {(currentQuestion.difficulty || '').toUpperCase()}
               </span>
             )}
             {currentQuestion?.topic && (
-              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '4px', background: '#E3F2FD', color: '#2196F3' }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '999px', background: 'rgba(59,130,246,0.2)', color: '#60a5fa' }}>
                 {currentQuestion.topic}
               </span>
             )}
             {currentQuestion?.points && (
-              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '4px', background: '#f5f5f5', color: '#666' }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 10px', borderRadius: '999px', background: 'rgba(148,163,184,0.15)', color: '#cbd5f5' }}>
                 {currentQuestion.points} pts
               </span>
             )}
           </div>
 
-          <h2 style={{ color: '#333', fontSize: '18px', fontWeight: '600', marginBottom: '12px', lineHeight: '1.4' }}>{currentQuestion?.title}</h2>
-          <div style={{ color: '#333', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>Task</div>
-          <p style={{ color: '#666', fontSize: '14px', lineHeight: '1.6', marginBottom: '20px', whiteSpace: 'pre-wrap' }}>{currentQuestion?.description}</p>
+          <h2 style={{ color: '#e5e7eb', fontSize: '18px', fontWeight: '600', marginBottom: '12px', lineHeight: '1.4' }}>{currentQuestion?.title}</h2>
+          <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>Task</div>
+          <p style={{ color: 'rgba(226,232,240,0.75)', fontSize: '14px', lineHeight: '1.6', marginBottom: '20px', whiteSpace: 'pre-wrap' }}>{currentQuestion?.description}</p>
 
           <div style={{ marginBottom: '16px' }}>
-            <div style={{ color: '#333', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Allowed Languages</div>
+            <div style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Allowed Languages</div>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {allowedLanguages.map(lang => (
                 <span key={lang} style={{
                   fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '4px',
-                  background: language === lang ? '#2196F3' : '#f5f5f5',
-                  color: language === lang ? '#fff' : '#666',
-                  border: '1px solid #e0e0e0'
+                  background: language === lang ? '#2563eb' : 'rgba(148,163,184,0.15)',
+                  color: language === lang ? '#fff' : '#cbd5f5',
+                  border: '1px solid rgba(148,163,184,0.2)'
                 }}>{LANGUAGE_LABELS[lang] || lang}</span>
               ))}
             </div>
@@ -761,17 +804,17 @@ function TestAttempt({ test, onBack }) {
 
           {Array.isArray(currentQuestion?.test_cases) && currentQuestion.test_cases.filter(tc => !tc.is_hidden).length > 0 && (
             <>
-              <div style={{ color: '#333', fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Sample Test Cases</div>
+              <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Sample Test Cases</div>
               {currentQuestion.test_cases.filter(tc => !tc.is_hidden).map((tc, idx) => (
                 <div key={tc.id ?? idx} style={{ marginBottom: '16px' }}>
-                  <div style={{ fontSize: '13px', color: '#999', marginBottom: '6px' }}>Example {idx + 1}</div>
-                  <div style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '10px 12px', fontFamily: 'monospace', fontSize: '13px', marginBottom: '6px' }}>
-                    <div style={{ color: '#999', fontSize: '12px', marginBottom: '2px' }}>Input:</div>
-                    <div style={{ color: '#333' }}>{tc.input || '(empty)'}</div>
+                  <div style={{ fontSize: '13px', color: 'rgba(226,232,240,0.6)', marginBottom: '6px' }}>Example {idx + 1}</div>
+                  <div style={{ background: 'rgba(2,6,23,0.7)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '10px 12px', fontFamily: 'monospace', fontSize: '13px', marginBottom: '6px' }}>
+                    <div style={{ color: 'rgba(226,232,240,0.5)', fontSize: '12px', marginBottom: '2px' }}>Input:</div>
+                    <div style={{ color: '#e2e8f0' }}>{tc.input || '(empty)'}</div>
                   </div>
-                  <div style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '10px 12px', fontFamily: 'monospace', fontSize: '13px' }}>
-                    <div style={{ color: '#999', fontSize: '12px', marginBottom: '2px' }}>Output:</div>
-                    <div style={{ color: '#333' }}>{tc.expected_output}</div>
+                  <div style={{ background: 'rgba(2,6,23,0.7)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '10px 12px', fontFamily: 'monospace', fontSize: '13px' }}>
+                    <div style={{ color: 'rgba(226,232,240,0.5)', fontSize: '12px', marginBottom: '2px' }}>Output:</div>
+                    <div style={{ color: '#e2e8f0' }}>{tc.expected_output}</div>
                   </div>
                 </div>
               ))}
@@ -786,21 +829,33 @@ function TestAttempt({ test, onBack }) {
           </div>
 
           {(result || error || submitSuccess) && (
-            <div style={{ flex: '0 0 40%', overflowY: 'auto', background: '#fff', borderTop: '1px solid #e0e0e0', padding: '16px 24px' }}>
+            <div style={{ flex: '0 0 40%', overflowY: 'auto', background: 'rgba(15,23,42,0.95)', borderTop: '1px solid #1f2937', padding: '16px 24px' }}>
 
               {submitSuccess && (
-                <div style={{ background: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: '4px', padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <CheckCircle size={16} color="#4CAF50" />
-                  <span style={{ color: '#2E7D32', fontWeight: '600', fontSize: '14px' }}>{submitSuccess}</span>
+                <div style={{ background: 'rgba(22,163,74,0.15)', border: '1px solid rgba(34,197,94,0.4)', borderRadius: '10px', padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <CheckCircle size={16} color="#22c55e" />
+                  <span style={{ color: '#bbf7d0', fontWeight: '600', fontSize: '14px' }}>{submitSuccess}</span>
+                </div>
+              )}
+
+              {timeUp && !error && (
+                <div style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: '10px', padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <AlertCircle size={16} color="#f87171" style={{ marginTop: '2px', flexShrink: 0 }} />
+                  <div>
+                    <div style={{ color: '#fecaca', fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>Time is up</div>
+                    <pre style={{ color: 'rgba(226,232,240,0.7)', fontSize: '13px', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+                      The test duration has ended. Please contact your instructor if you need more time.
+                    </pre>
+                  </div>
                 </div>
               )}
 
               {error && (
-                <div style={{ background: '#FFEBEE', border: '1px solid #FFCDD2', borderRadius: '4px', padding: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <AlertCircle size={16} color="#F44336" style={{ marginTop: '2px', flexShrink: 0 }} />
+                <div style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: '10px', padding: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <AlertCircle size={16} color="#f87171" style={{ marginTop: '2px', flexShrink: 0 }} />
                   <div>
-                    <div style={{ color: '#F44336', fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>Error</div>
-                    <pre style={{ color: '#666', fontSize: '13px', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{error}</pre>
+                    <div style={{ color: '#fecaca', fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>Error</div>
+                    <pre style={{ color: 'rgba(226,232,240,0.7)', fontSize: '13px', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{error}</pre>
                   </div>
                 </div>
               )}
@@ -808,24 +863,24 @@ function TestAttempt({ test, onBack }) {
               {result && (
                 <>
                   <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                    <div style={{ flex: 1, background: '#E3F2FD', border: '1px solid #BBDEFB', borderRadius: '4px', padding: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#2196F3', marginBottom: '4px' }}>Score</div>
-                      <div style={{ fontSize: '24px', fontWeight: '700', color: result.summary.score === 100 ? '#4CAF50' : result.summary.score > 0 ? '#FF9800' : '#F44336' }}>
+                    <div style={{ flex: 1, background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '10px', padding: '12px' }}>
+                      <div style={{ fontSize: '12px', color: '#60a5fa', marginBottom: '4px' }}>Score</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: result.summary.score === 100 ? '#22c55e' : result.summary.score > 0 ? '#f59e0b' : '#f87171' }}>
                         {result.summary.score}%
                       </div>
                     </div>
-                    <div style={{ flex: 1, background: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: '4px', padding: '12px' }}>
-                      <div style={{ fontSize: '12px', color: '#4CAF50', marginBottom: '4px' }}>Passed</div>
-                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#333' }}>
+                    <div style={{ flex: 1, background: 'rgba(22,163,74,0.12)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: '10px', padding: '12px' }}>
+                      <div style={{ fontSize: '12px', color: '#22c55e', marginBottom: '4px' }}>Passed</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#e5e7eb' }}>
                         {result.summary.passed}<span style={{ fontSize: '16px', color: '#999' }}>/{result.summary.total}</span>
                       </div>
                     </div>
                   </div>
 
                   {result.compilation_error && (
-                    <div style={{ background: '#FFEBEE', border: '1px solid #FFCDD2', borderRadius: '4px', padding: '12px', marginBottom: '12px' }}>
-                      <div style={{ color: '#F44336', fontWeight: '600', fontSize: '13px', marginBottom: '6px' }}>Compilation Error</div>
-                      <pre style={{ color: '#666', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: 0 }}>{result.compilation_error}</pre>
+                    <div style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+                      <div style={{ color: '#fecaca', fontWeight: '600', fontSize: '13px', marginBottom: '6px' }}>Compilation Error</div>
+                      <pre style={{ color: 'rgba(226,232,240,0.7)', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: 0 }}>{result.compilation_error}</pre>
                     </div>
                   )}
 
@@ -837,26 +892,26 @@ function TestAttempt({ test, onBack }) {
                           if (!testResult || typeof testResult !== 'object') return null;
                           const vs = getVerdictStyle(testResult);
                           return (
-                            <div key={testResult.id ?? idx} style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '10px 12px' }}>
+                            <div key={testResult.id ?? idx} style={{ background: 'rgba(15,23,42,0.7)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '10px', padding: '10px 12px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   {vs.icon}
                                   <span style={{ color: vs.color, fontWeight: '600', fontSize: '13px' }}>{vs.label}</span>
-                                  <span style={{ color: '#999', fontSize: '12px' }}>#{idx + 1}</span>
-                                  {testResult.is_hidden && <span style={{ color: '#999', fontSize: '11px', background: '#eee', padding: '1px 6px', borderRadius: '4px' }}>hidden</span>}
+                                  <span style={{ color: 'rgba(226,232,240,0.6)', fontSize: '12px' }}>#{idx + 1}</span>
+                                  {testResult.is_hidden && <span style={{ color: 'rgba(226,232,240,0.6)', fontSize: '11px', background: 'rgba(148,163,184,0.2)', padding: '1px 6px', borderRadius: '4px' }}>hidden</span>}
                                 </div>
                                 {testResult.time_ms !== undefined && testResult.time_ms !== null && (
-                                  <span style={{ color: '#999', fontSize: '12px' }}>{testResult.time_ms}ms</span>
+                                  <span style={{ color: 'rgba(226,232,240,0.6)', fontSize: '12px' }}>{testResult.time_ms}ms</span>
                                 )}
                               </div>
                               {testResult.error && (
-                                <pre style={{ background: '#fff', borderRadius: '4px', padding: '6px 8px', color: '#F44336', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.error}</pre>
+                                <pre style={{ background: 'rgba(2,6,23,0.6)', borderRadius: '6px', padding: '6px 8px', color: '#f87171', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.error}</pre>
                               )}
                               {testResult.stdout && !testResult.is_hidden && (
-                                <pre style={{ background: '#fff', borderRadius: '4px', padding: '6px 8px', color: '#666', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.stdout}</pre>
+                                <pre style={{ background: 'rgba(2,6,23,0.6)', borderRadius: '6px', padding: '6px 8px', color: 'rgba(226,232,240,0.75)', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.stdout}</pre>
                               )}
                               {testResult.stderr && (
-                                <pre style={{ background: '#fff', borderRadius: '4px', padding: '6px 8px', color: '#F44336', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.stderr}</pre>
+                                <pre style={{ background: 'rgba(2,6,23,0.6)', borderRadius: '6px', padding: '6px 8px', color: '#f87171', fontSize: '12px', fontFamily: 'monospace', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{testResult.stderr}</pre>
                               )}
                             </div>
                           );
@@ -874,7 +929,10 @@ function TestAttempt({ test, onBack }) {
           )}
         </div>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap");
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }
