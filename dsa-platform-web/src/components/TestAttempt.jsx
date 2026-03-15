@@ -448,7 +448,7 @@
 
 
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Play, Loader2, CheckCircle, XCircle, AlertCircle, Clock, ChevronLeft, ChevronRight, BookOpen, RotateCcw } from 'lucide-react';
 import CodeEditor from './CodeEditor';
 import api from '../services/api';
@@ -487,15 +487,64 @@ function TestAttempt({ test, onBack }) {
   const [submitSuccess, setSubmitSuccess] = useState(null);
   const [timeLeft, setTimeLeft] = useState(null);
   const [timeUp, setTimeUp] = useState(false);
+  const [submissionsByQuestion, setSubmissionsByQuestion] = useState({});
+  const [attemptInfo, setAttemptInfo] = useState(null);
+  const [codeByQuestionId, setCodeByQuestionId] = useState({});
+  const [languageByQuestionId, setLanguageByQuestionId] = useState({});
+  const autoSubmitRef = useRef(false);
 
   useEffect(() => {
     async function fetchQuestions() {
       setIsLoadingQuestions(true);
       setLoadError(null);
       try {
-        const data = await api.getStudentTestQuestions(test.id);
-        if (!Array.isArray(data)) throw new Error('Unexpected response format');
-        setQuestions(data);
+        const [questionsData, submissionsData, attemptData] = await Promise.all([
+          api.getStudentTestQuestions(test.id),
+          api.getStudentTestSubmissions(test.id),
+          api.startTestAttempt(test.id),
+        ]);
+        if (!Array.isArray(questionsData)) throw new Error('Unexpected response format');
+        setQuestions(questionsData);
+        setAttemptInfo(attemptData);
+
+        const submissionMap = {};
+        const scoreMap = {};
+        if (Array.isArray(submissionsData)) {
+          submissionsData.forEach((sub) => {
+            if (sub?.question_id) {
+              submissionMap[sub.question_id] = sub;
+              if (sub.score !== undefined) scoreMap[sub.question_id] = sub.score;
+            }
+          });
+        }
+        setSubmissionsByQuestion(submissionMap);
+        if (Object.keys(scoreMap).length > 0) {
+          setQuestionResults(prev => ({ ...prev, ...scoreMap }));
+        }
+        if (Array.isArray(questionsData) && questionsData.length > 0) {
+          setCodeByQuestionId(prev => {
+            const next = { ...prev };
+            questionsData.forEach((q) => {
+              if (submissionMap[q.id]?.code !== undefined) {
+                next[q.id] = submissionMap[q.id].code;
+              } else if (next[q.id] === undefined) {
+                next[q.id] = DEFAULT_CODE[allowedLanguages[0]] || DEFAULT_CODE.python;
+              }
+            });
+            return next;
+          });
+          setLanguageByQuestionId(prev => {
+            const next = { ...prev };
+            questionsData.forEach((q) => {
+              if (submissionMap[q.id]?.language) {
+                next[q.id] = submissionMap[q.id].language;
+              } else if (next[q.id] === undefined) {
+                next[q.id] = allowedLanguages[0] || 'python';
+              }
+            });
+            return next;
+          });
+        }
       } catch (err) {
         const msg = typeof err?.response?.data?.detail === 'string'
           ? err.response.data.detail
@@ -511,32 +560,65 @@ function TestAttempt({ test, onBack }) {
   }, [test?.id]);
 
   useEffect(() => {
-    if (!test?.duration_minutes) return;
-    const totalSeconds = Math.max(1, Math.floor(test.duration_minutes * 60));
-    setTimeLeft(totalSeconds);
-    setTimeUp(false);
-    const id = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev === null) return prev;
-        if (prev <= 1) {
-          clearInterval(id);
-          setTimeUp(true);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [test?.duration_minutes, test?.id]);
+    autoSubmitRef.current = false;
+  }, [test?.id]);
 
   useEffect(() => {
-    setCode(DEFAULT_CODE[language] || DEFAULT_CODE.python);
+    if (!attemptInfo || typeof attemptInfo.remaining_seconds !== 'number') return;
+    const totalSeconds = Math.max(0, Math.floor(attemptInfo.remaining_seconds));
+    setTimeLeft(totalSeconds);
+    setTimeUp(totalSeconds <= 0);
+    if (totalSeconds <= 0) return;
+    const endAt = Date.now() + totalSeconds * 1000;
+    const id = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(id);
+        setTimeUp(true);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [attemptInfo?.started_at, attemptInfo?.remaining_seconds]);
+
+  useEffect(() => {
+    const current = questions[currentQuestionIndex];
+    if (!current) return;
+    const submitted = submissionsByQuestion[current.id];
+    if (submitted) {
+      if (submitted.language && submitted.language !== language) {
+        setLanguage(submitted.language);
+      }
+      setLanguageByQuestionId(prev => ({ ...prev, [current.id]: submitted.language || prev[current.id] }));
+      setCodeByQuestionId(prev => ({ ...prev, [current.id]: submitted.code ?? prev[current.id] }));
+      setCode(submitted.code || '');
+      setSubmitSuccess(`Already submitted. Score: ${submitted.score ?? 0}%`);
+    } else {
+      const storedLang = languageByQuestionId[current.id] || allowedLanguages[0] || 'python';
+      const storedCode = codeByQuestionId[current.id] ?? (DEFAULT_CODE[storedLang] || DEFAULT_CODE.python);
+      if (storedLang !== language) setLanguage(storedLang);
+      setCode(storedCode || '');
+      setSubmitSuccess(null);
+    }
+    setResult(null);
+    setError(null);
+  }, [currentQuestionIndex, submissionsByQuestion, questions, languageByQuestionId, codeByQuestionId]);
+
+  useEffect(() => {
+    const current = questions[currentQuestionIndex];
+    const submitted = current ? submissionsByQuestion[current.id] : null;
+    if (!current || submitted) return;
+    const defaultCode = DEFAULT_CODE[language] || DEFAULT_CODE.python;
+    setCode(defaultCode);
+    setCodeByQuestionId(prev => ({ ...prev, [current.id]: defaultCode }));
+    setLanguageByQuestionId(prev => ({ ...prev, [current.id]: language }));
     setResult(null);
     setError(null);
     setSubmitSuccess(null);
-  }, [currentQuestionIndex, language]);
+  }, [language]);
 
   const currentQuestion = questions[currentQuestionIndex];
+  const currentSubmission = currentQuestion ? submissionsByQuestion[currentQuestion.id] : null;
 
   const extractErrorMessage = (err) => {
     if (Array.isArray(err?.response?.data?.detail))
@@ -547,17 +629,17 @@ function TestAttempt({ test, onBack }) {
   };
 
   // ✅ FIXED: positional args + summary field now returned by backend
-  const runCode = async (includeHidden = true) => {
-    if (!currentQuestion) return null;
+  const runCodeFor = async (question, codeText, lang, includeHidden = true) => {
+    if (!question) return null;
     const tests = includeHidden
-      ? (currentQuestion.test_cases || [])
-      : (currentQuestion.test_cases || []).filter(tc => !tc.is_hidden);
+      ? (question.test_cases || [])
+      : (question.test_cases || []).filter(tc => !tc.is_hidden);
     const response = await api.executeCode(
-      code,
-      language,
+      codeText,
+      lang,
       tests,
-      currentQuestion.id,
-      (currentQuestion.time_limit_ms || 2000) / 1000,
+      question.id,
+      (question.time_limit_ms || 2000) / 1000,
       256000
     );
     if (!response || typeof response !== 'object') throw new Error('Invalid response from execution server');
@@ -569,17 +651,26 @@ function TestAttempt({ test, onBack }) {
     };
     setResult(safeResponse);
     if (safeResponse.summary?.score !== undefined)
-      setQuestionResults(prev => ({ ...prev, [currentQuestion.id]: safeResponse.summary.score }));
+      setQuestionResults(prev => ({ ...prev, [question.id]: safeResponse.summary.score }));
     return safeResponse;
   };
 
+  const handleCodeChange = (value) => {
+    const next = value || '';
+    setCode(next);
+    if (currentQuestion?.id) {
+      setCodeByQuestionId(prev => ({ ...prev, [currentQuestion.id]: next }));
+    }
+  };
+
   const handleExecute = async () => {
+    if (timeUp || currentSubmission) return;
     setIsExecuting(true);
     setError(null);
     setResult(null);
     setSubmitSuccess(null);
     try {
-      await runCode(false);
+      await runCodeFor(currentQuestion, code, language, false);
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
@@ -589,12 +680,20 @@ function TestAttempt({ test, onBack }) {
 
   const handleSubmit = async () => {
     if (!currentQuestion) return;
+    if (timeUp) {
+      setError('Test time is over.');
+      return;
+    }
+    if (currentSubmission) {
+      setError('You have already submitted this question.');
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     setResult(null);
     setSubmitSuccess(null);
     try {
-      const safeResponse = await runCode(true);
+      const safeResponse = await runCodeFor(currentQuestion, code, language, true);
       if (!safeResponse) return;
 
       await api.submitSolution({
@@ -605,15 +704,83 @@ function TestAttempt({ test, onBack }) {
         score: safeResponse.summary.score,
         passed: safeResponse.summary.passed,
         total: safeResponse.summary.total,
+        auto_submit: false,
       });
 
       setSubmitSuccess(`Submitted successfully! Score: ${safeResponse.summary.score}%`);
+      const newSubmission = {
+        question_id: currentQuestion.id,
+        test_id: test.id,
+        language,
+        code,
+        score: safeResponse.summary.score,
+        passed: safeResponse.summary.passed,
+        total: safeResponse.summary.total,
+        submitted_at: new Date().toISOString(),
+      };
+      setSubmissionsByQuestion(prev => ({ ...prev, [currentQuestion.id]: newSubmission }));
+      setQuestionResults(prev => ({ ...prev, [currentQuestion.id]: safeResponse.summary.score }));
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (!timeUp) return;
+    if (autoSubmitRef.current) return;
+    if (!Array.isArray(questions) || questions.length === 0) return;
+    autoSubmitRef.current = true;
+
+    const doAutoSubmitAll = async () => {
+      setIsSubmitting(true);
+      setError(null);
+      setResult(null);
+      setSubmitSuccess(null);
+      try {
+        for (const q of questions) {
+          if (submissionsByQuestion[q.id]) continue;
+          const lang = languageByQuestionId[q.id] || allowedLanguages[0] || 'python';
+          const codeText = codeByQuestionId[q.id] ?? (DEFAULT_CODE[lang] || DEFAULT_CODE.python);
+          const safeResponse = await runCodeFor(q, codeText, lang, true);
+          if (!safeResponse) continue;
+
+          await api.submitSolution({
+            question_id: q.id,
+            test_id: test.id,
+            language: lang,
+            code: codeText,
+            score: safeResponse.summary.score,
+            passed: safeResponse.summary.passed,
+            total: safeResponse.summary.total,
+            auto_submit: true,
+          });
+
+          const newSubmission = {
+            question_id: q.id,
+            test_id: test.id,
+            language: lang,
+            code: codeText,
+            score: safeResponse.summary.score,
+            passed: safeResponse.summary.passed,
+            total: safeResponse.summary.total,
+            submitted_at: new Date().toISOString(),
+            auto_submit: true,
+          };
+          setSubmissionsByQuestion(prev => ({ ...prev, [q.id]: newSubmission }));
+          setQuestionResults(prev => ({ ...prev, [q.id]: safeResponse.summary.score }));
+        }
+        setSubmitSuccess('Auto-submitted all unanswered questions.');
+      } catch (err) {
+        setError(extractErrorMessage(err));
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    void doAutoSubmitAll();
+  }, [timeUp, questions, submissionsByQuestion, languageByQuestionId, codeByQuestionId]);
 
   const getDifficultyStyle = (d) => {
     if (d === 'EASY' || d === 'easy') return { color: '#4CAF50', bg: '#E8F5E9' };
@@ -630,7 +797,8 @@ function TestAttempt({ test, onBack }) {
     return { icon: <XCircle size={16} color="#F44336" />, color: '#F44336', label: 'FAIL' };
   };
 
-  const isBusy = isExecuting || isSubmitting || timeUp;
+  const isLocked = timeUp || !!currentSubmission;
+  const isBusy = isExecuting || isSubmitting || isLocked;
 
   const formatTime = (seconds) => {
     if (seconds === null || seconds === undefined) return '--:--';
@@ -733,8 +901,21 @@ function TestAttempt({ test, onBack }) {
             ))}
           </select>
 
-          <button onClick={() => { setCode(DEFAULT_CODE[language] || ''); setResult(null); setError(null); setSubmitSuccess(null); }}
-            style={{ background: '#0f172a', color: '#cbd5f5', border: '1px solid #1f2937', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button
+            onClick={() => { setCode(DEFAULT_CODE[language] || ''); setResult(null); setError(null); setSubmitSuccess(null); }}
+            disabled={isBusy}
+            style={{
+              background: isBusy ? '#111827' : '#0f172a',
+              color: isBusy ? '#475569' : '#cbd5f5',
+              border: '1px solid #1f2937',
+              borderRadius: '8px',
+              padding: '6px 12px',
+              fontSize: '13px',
+              cursor: isBusy ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}>
             <RotateCcw size={13} /> Reset
           </button>
 
@@ -828,7 +1009,7 @@ function TestAttempt({ test, onBack }) {
         {/* RIGHT: Editor + Results */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ flex: result || error || submitSuccess ? '0 0 60%' : 1, overflow: 'hidden', background: '#1e1e1e' }}>
-            <CodeEditor code={code} onChange={(value) => setCode(value || '')} language={language} readOnly={isBusy} />
+            <CodeEditor code={code} onChange={handleCodeChange} language={language} readOnly={isBusy} />
           </div>
 
           {(result || error || submitSuccess) && (
