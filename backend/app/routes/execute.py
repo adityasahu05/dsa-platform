@@ -73,6 +73,14 @@ def submit_token(code: str, language_id: int, stdin: str,
         headers=HEADERS,
         timeout=15,
     )
+    if resp.status_code == 404 and "Application not found" in resp.text:
+        # Fallback to public Judge0 CE without auth header
+        resp = requests.post(
+            "https://ce.judge0.com/submissions?base64_encoded=false&wait=false",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
     if resp.status_code not in (200, 201):
         raise HTTPException(
             status_code=502,
