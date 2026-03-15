@@ -547,12 +547,15 @@ function TestAttempt({ test, onBack }) {
   };
 
   // ✅ FIXED: positional args + summary field now returned by backend
-  const runCode = async () => {
+  const runCode = async (includeHidden = true) => {
     if (!currentQuestion) return null;
+    const tests = includeHidden
+      ? (currentQuestion.test_cases || [])
+      : (currentQuestion.test_cases || []).filter(tc => !tc.is_hidden);
     const response = await api.executeCode(
       code,
       language,
-      currentQuestion.test_cases || [],
+      tests,
       currentQuestion.id,
       (currentQuestion.time_limit_ms || 2000) / 1000,
       256000
@@ -576,7 +579,7 @@ function TestAttempt({ test, onBack }) {
     setResult(null);
     setSubmitSuccess(null);
     try {
-      await runCode();
+      await runCode(false);
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
@@ -591,7 +594,7 @@ function TestAttempt({ test, onBack }) {
     setResult(null);
     setSubmitSuccess(null);
     try {
-      const safeResponse = await runCode();
+      const safeResponse = await runCode(true);
       if (!safeResponse) return;
 
       await api.submitSolution({
