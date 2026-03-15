@@ -2835,6 +2835,127 @@ def get_test_analytics(test_id: str):
     return analytics
 
 
+@router.get("/analytics/test/{test_id}/detailed")
+def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(require_teacher)):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    all_questions = db.reference("/questions").get() or {}
+    questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
+    question_list = [
+        {"id": qid, "title": q.get("title"), "points": q.get("points", 10)}
+        for qid, q in questions.items()
+    ]
+
+    all_subs = db.reference("/submissions").get() or {}
+    all_users = db.reference("/users").get() or {}
+    attempts = db.reference(f"/attempts/{test_id}").get() or {}
+
+    duration_seconds = get_test_duration_seconds(test)
+
+    # Build per-student aggregation
+    student_rows = {}
+    for sub in all_subs.values():
+        if sub.get("test_id") != test_id:
+            continue
+        student_id = sub.get("student_id")
+        if not student_id:
+            continue
+        if student_id not in student_rows:
+            user = all_users.get(student_id, {})
+            attempt = attempts.get(student_id, {})
+            started_at = attempt.get("started_at")
+            student_rows[student_id] = {
+                "student_id": student_id,
+                "student_name": user.get("name") or user.get("full_name") or "Unknown",
+                "student_email": user.get("email") or "Unknown",
+                "started_at": started_at,
+                "deadline_at": None,
+                "overall_score": 0,
+                "overall_submission_time_seconds": None,
+                "overall_submitted_at": None,
+                "questions": {},
+            }
+            if started_at:
+                started_dt = parse_iso_ts(started_at)
+                if started_dt:
+                    student_rows[student_id]["deadline_at"] = (
+                        started_dt + timedelta(seconds=duration_seconds)
+                    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        row = student_rows[student_id]
+        qid = sub.get("question_id")
+        if qid:
+            row["questions"][qid] = {
+                "question_id": qid,
+                "submitted_at": sub.get("submitted_at"),
+                "score": sub.get("score", 0),
+                "language": sub.get("language"),
+                "auto_submit": bool(sub.get("auto_submit", False)),
+            }
+
+        submitted_at = sub.get("submitted_at")
+        if submitted_at:
+            if (row["overall_submitted_at"] is None) or (submitted_at > row["overall_submitted_at"]):
+                row["overall_submitted_at"] = submitted_at
+
+    # Fill missing students with attempts but no submissions
+    for student_id, attempt in attempts.items():
+        if student_id in student_rows:
+            continue
+        user = all_users.get(student_id, {})
+        started_at = attempt.get("started_at")
+        student_rows[student_id] = {
+            "student_id": student_id,
+            "student_name": user.get("name") or user.get("full_name") or "Unknown",
+            "student_email": user.get("email") or "Unknown",
+            "started_at": started_at,
+            "deadline_at": None,
+            "overall_score": 0,
+            "overall_submission_time_seconds": None,
+            "overall_submitted_at": None,
+            "questions": {},
+        }
+        if started_at:
+            started_dt = parse_iso_ts(started_at)
+            if started_dt:
+                student_rows[student_id]["deadline_at"] = (
+                    started_dt + timedelta(seconds=duration_seconds)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    # Compute overall score and submission time per student
+    total_questions = len(question_list)
+    for row in student_rows.values():
+        if total_questions > 0:
+            total_score = 0.0
+            for q in question_list:
+                qid = q["id"]
+                q_sub = row["questions"].get(qid)
+                total_score += float(q_sub.get("score", 0)) if q_sub else 0.0
+            row["overall_score"] = round(total_score / total_questions, 2)
+        if row["started_at"] and row["overall_submitted_at"]:
+            started_dt = parse_iso_ts(row["started_at"])
+            submitted_dt = parse_iso_ts(row["overall_submitted_at"])
+            if started_dt and submitted_dt:
+                row["overall_submission_time_seconds"] = max(0, int((submitted_dt - started_dt).total_seconds()))
+
+    # Sort by overall_submitted_at desc, then name
+    sorted_rows = sorted(
+        student_rows.values(),
+        key=lambda r: (r.get("overall_submitted_at") or "", r.get("student_name") or ""),
+        reverse=True,
+    )
+
+    return {
+        "test_id": test_id,
+        "test_title": test.get("title"),
+        "duration_minutes": test.get("duration_minutes", 60),
+        "questions": question_list,
+        "students": sorted_rows,
+    }
+
+
 # ─── Student Routes ───────────────────────────────────────────────────────────
 
 @router.get("/student/tests", tags=["student"])
