@@ -166,6 +166,14 @@ export const forfeitTestAttempt = async (testId, tabSwitches = null) => {
   return response.data;
 };
 
+export const logTabSwitch = async (testId, count, timestamp = null) => {
+  const response = await apiClient.post(`/api/teacher/student/test/${testId}/tab-switch`, {
+    count,
+    timestamp,
+  });
+  return response.data;
+};
+
 export const submitSolution = async (data) => {
   const response = await apiClient.post('/api/teacher/student/submit', data);
   return response.data;
@@ -198,6 +206,7 @@ const api = {
   getStudentTestSubmissions,
   startTestAttempt,
   forfeitTestAttempt,
+  logTabSwitch,
   submitSolution,
 };
 
