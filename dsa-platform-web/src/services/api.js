@@ -159,6 +159,13 @@ export const startTestAttempt = async (testId) => {
   return response.data;
 };
 
+export const forfeitTestAttempt = async (testId, tabSwitches = null) => {
+  const response = await apiClient.post(`/api/teacher/student/test/${testId}/forfeit`, {
+    tab_switches: tabSwitches,
+  });
+  return response.data;
+};
+
 export const submitSolution = async (data) => {
   const response = await apiClient.post('/api/teacher/student/submit', data);
   return response.data;
@@ -190,6 +197,7 @@ const api = {
   getStudentTestQuestions,
   getStudentTestSubmissions,
   startTestAttempt,
+  forfeitTestAttempt,
   submitSolution,
 };
 
