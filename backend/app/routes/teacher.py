@@ -95,6 +95,11 @@ class ForfeitRequest(BaseModel):
     tab_switches: Optional[int] = None
 
 
+class TabSwitchLogRequest(BaseModel):
+    count: int
+    timestamp: Optional[str] = None
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def parse_languages(lang_str: str) -> List[str]:
@@ -661,6 +666,28 @@ def start_test_attempt(test_id: str, current_user: dict = Depends(get_current_us
         "expired": remaining <= 0,
         "forfeited": is_attempt_forfeited(attempt),
     }
+
+
+@router.post("/student/test/{test_id}/tab-switch", tags=["student"])
+def log_tab_switch(
+    test_id: str,
+    data: TabSwitchLogRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    if attempt.get("forfeited"):
+        raise HTTPException(status_code=403, detail="Test forfeited.")
+
+    ts = data.timestamp or utcnow_iso()
+    event = {"count": data.count, "timestamp": ts}
+    db.reference(f"/attempts/{test_id}/{current_user['id']}/tab_switch_events").push(event)
+    attempt_ref.update({"tab_switches": data.count, "last_tab_switch_at": ts})
+    return {"logged": True, "count": data.count, "timestamp": ts}
 
 
 @router.post("/student/test/{test_id}/forfeit", tags=["student"])
