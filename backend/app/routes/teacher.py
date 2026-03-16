@@ -2811,8 +2811,22 @@ def delete_test_case(test_case_id: str):
 @router.get("/submissions")
 def get_all_submissions(limit: int = 50):
     all_subs = db.reference("/submissions").get() or {}
+    all_users = db.reference("/users").get() or {}
+    all_questions = db.reference("/questions").get() or {}
     subs = sorted(all_subs.values(), key=lambda x: x.get("submitted_at", ""), reverse=True)
-    return subs[:limit]
+    enriched = []
+    for sub in subs[:limit]:
+        student_id = sub.get("student_id")
+        question_id = sub.get("question_id")
+        user = all_users.get(student_id, {}) if student_id else {}
+        question = all_questions.get(question_id, {}) if question_id else {}
+        enriched.append({
+            **sub,
+            "student_name": user.get("name") or user.get("full_name") or "Unknown",
+            "student_email": user.get("email") or "Unknown",
+            "question_title": question.get("title") or "Unknown",
+        })
+    return enriched
 
 
 @router.get("/analytics/test/{test_id}")
