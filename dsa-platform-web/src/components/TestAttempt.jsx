@@ -229,6 +229,7 @@ function TestAttempt({ test, onBack }) {
       lastSwitchRef.current = now;
       setTabSwitches((prev) => {
         const next = prev + 1;
+        void api.logTabSwitch(test.id, next, new Date().toISOString()).catch(() => {});
         if (next > TAB_SWITCH_LIMIT) {
           void triggerForfeit(next);
         }
