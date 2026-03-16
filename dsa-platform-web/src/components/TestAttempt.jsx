@@ -46,11 +46,13 @@ function TestAttempt({ test, onBack }) {
   const [languageByQuestionId, setLanguageByQuestionId] = useState({});
   const [tabSwitches, setTabSwitches] = useState(0);
   const [pasteCount, setPasteCount] = useState(0);
+  const [pasteWarning, setPasteWarning] = useState(null);
   const [forfeited, setForfeited] = useState(false);
   const [forfeitMessage, setForfeitMessage] = useState(null);
   const autoSubmitRef = useRef(false);
   const lastSwitchRef = useRef(0);
   const forfeitInFlightRef = useRef(false);
+  const pasteWarningTimerRef = useRef(null);
   const TAB_SWITCH_LIMIT = 3;
 
   useEffect(() => {
@@ -130,8 +132,13 @@ function TestAttempt({ test, onBack }) {
   useEffect(() => {
     setTabSwitches(0);
     setPasteCount(0);
+    setPasteWarning(null);
     setForfeited(false);
     setForfeitMessage(null);
+    if (pasteWarningTimerRef.current) {
+      clearTimeout(pasteWarningTimerRef.current);
+      pasteWarningTimerRef.current = null;
+    }
   }, [test?.id]);
 
   useEffect(() => {
@@ -273,6 +280,18 @@ function TestAttempt({ test, onBack }) {
     if (currentQuestion?.id) {
       setCodeByQuestionId(prev => ({ ...prev, [currentQuestion.id]: next }));
     }
+  };
+
+  const handlePasteBlocked = () => {
+    setPasteCount((prev) => prev + 1);
+    setPasteWarning('Pasting is disabled during the test.');
+    if (pasteWarningTimerRef.current) {
+      clearTimeout(pasteWarningTimerRef.current);
+    }
+    pasteWarningTimerRef.current = setTimeout(() => {
+      setPasteWarning(null);
+      pasteWarningTimerRef.current = null;
+    }, 2000);
   };
 
   const handleExecute = async () => {
@@ -460,6 +479,63 @@ function TestAttempt({ test, onBack }) {
 
   return (
     <div style={{ minHeight: '100vh', background: '#0b0f19', fontFamily: "'Sora', 'Segoe UI', sans-serif", display: 'flex', flexDirection: 'column', color: '#e5e7eb' }}>
+      {forfeited && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(2,6,23,0.75)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '24px'
+        }}>
+          <div style={{
+            width: '100%',
+            maxWidth: '520px',
+            background: 'rgba(15,23,42,0.98)',
+            border: '1px solid rgba(248,113,113,0.5)',
+            borderRadius: '16px',
+            padding: '28px',
+            textAlign: 'center',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              background: 'rgba(248,113,113,0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <AlertCircle size={24} color="#f87171" />
+            </div>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: '#fecaca', marginBottom: '8px' }}>
+              Tab Switch Limit Exceeded
+            </div>
+            <div style={{ fontSize: '13px', color: 'rgba(226,232,240,0.75)', marginBottom: '20px', lineHeight: 1.6 }}>
+              You switched tabs more than {TAB_SWITCH_LIMIT} times. This test has been forfeited and you can’t continue.
+            </div>
+            <button
+              onClick={onBack}
+              style={{
+                padding: '10px 18px',
+                background: '#ef4444',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Exit Test
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top Toolbar */}
       <div style={{ background: 'rgba(15,23,42,0.95)', borderBottom: '1px solid #1f2937', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
@@ -657,12 +733,20 @@ function TestAttempt({ test, onBack }) {
               onChange={handleCodeChange}
               language={language}
               readOnly={isBusy}
-              onPaste={() => setPasteCount((prev) => prev + 1)}
+              disablePaste={true}
+              onPasteBlocked={handlePasteBlocked}
             />
           </div>
 
-          {(result || error || submitSuccess || forfeitMessage) && (
+          {(result || error || submitSuccess || forfeitMessage || pasteWarning) && (
             <div style={{ flex: '0 0 40%', overflowY: 'auto', background: 'rgba(15,23,42,0.95)', borderTop: '1px solid #1f2937', padding: '16px 24px' }}>
+
+              {pasteWarning && (
+                <div style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.4)', borderRadius: '10px', padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <AlertCircle size={16} color="#60a5fa" style={{ marginTop: '2px', flexShrink: 0 }} />
+                  <div style={{ color: '#bfdbfe', fontWeight: '600', fontSize: '14px' }}>{pasteWarning}</div>
+                </div>
+              )}
 
               {forfeitMessage && (
                 <div style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: '10px', padding: '12px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
