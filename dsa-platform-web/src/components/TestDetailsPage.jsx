@@ -328,7 +328,18 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
-                        {['NAME', 'EMAIL ID', 'TEST START', 'TEST END', 'TOTAL EXEC TIME', 'TOTAL COMP TIME', 'OVERALL MARKS'].map(h => (
+                        {[
+                          'NAME',
+                          'EMAIL ID',
+                          'TEST START',
+                          'TEST END',
+                          'TOTAL EXEC TIME',
+                          'TOTAL COMP TIME',
+                          'OVERALL TIME',
+                          'OVERALL MARKS',
+                          'TAB SWITCHES',
+                          'PASTED'
+                        ].map(h => (
                           <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
                             {h}
                           </th>
@@ -344,13 +355,16 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                             {formatDateTime(s.started_at)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                            {formatDateTime(s.deadline_at)}
+                            {formatDateTime(s.overall_submitted_at || s.deadline_at)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDurationMs(s.total_execution_time_ms)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDurationMs(s.total_compilation_time_ms)}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
+                            {formatDuration(s.overall_submission_time_seconds)}
                           </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{
@@ -360,6 +374,12 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                             }}>
                               {s.overall_score ?? 0}%
                             </span>
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
+                            {s.tab_switches ?? 0}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
+                            {(s.paste_count ?? 0) > 0 ? `Yes (${s.paste_count})` : 'No'}
                           </td>
                         </tr>
                       ))}
