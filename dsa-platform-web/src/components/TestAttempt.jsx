@@ -53,7 +53,9 @@ function TestAttempt({ test, onBack }) {
   const lastSwitchRef = useRef(0);
   const forfeitInFlightRef = useRef(false);
   const pasteWarningTimerRef = useRef(null);
-  const TAB_SWITCH_LIMIT = 3;
+  const tabSwitchLimit = Math.max(1, Number(test?.tab_switch_limit ?? 3));
+  const tabSwitchEnabled = test?.tab_switch_enabled !== false;
+  const pasteDisabled = test?.anti_paste_enabled !== false;
 
   useEffect(() => {
     async function fetchQuestions() {
@@ -222,6 +224,7 @@ function TestAttempt({ test, onBack }) {
 
   useEffect(() => {
     if (!test?.id) return;
+    if (!tabSwitchEnabled) return;
     const onSwitch = () => {
       if (forfeited) return;
       const now = Date.now();
@@ -230,7 +233,7 @@ function TestAttempt({ test, onBack }) {
       setTabSwitches((prev) => {
         const next = prev + 1;
         void api.logTabSwitch(test.id, next, new Date().toISOString()).catch(() => {});
-        if (next > TAB_SWITCH_LIMIT) {
+        if (next > tabSwitchLimit) {
           void triggerForfeit(next);
         }
         return next;
@@ -246,7 +249,7 @@ function TestAttempt({ test, onBack }) {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [test?.id, forfeited]);
+  }, [test?.id, forfeited, tabSwitchEnabled, tabSwitchLimit]);
 
   // ✅ FIXED: positional args + summary field now returned by backend
   const runCodeFor = async (question, codeText, lang, includeHidden = true) => {
@@ -275,6 +278,25 @@ function TestAttempt({ test, onBack }) {
     return safeResponse;
   };
 
+  const getTimingFromResult = (safeResponse) => {
+    if (!safeResponse || typeof safeResponse !== 'object') {
+      return { executionTimeMs: null, compilationTimeMs: null };
+    }
+    const results = Array.isArray(safeResponse.results) ? safeResponse.results : [];
+    const executionTimeMs = results.reduce((sum, r) => {
+      const t = typeof r?.time_ms === 'number' ? r.time_ms : 0;
+      return sum + t;
+    }, 0);
+    const compilationTimeMs =
+      typeof safeResponse.compilation_time_ms === 'number'
+        ? safeResponse.compilation_time_ms
+        : null;
+    return {
+      executionTimeMs: results.length > 0 ? executionTimeMs : null,
+      compilationTimeMs,
+    };
+  };
+
   const handleCodeChange = (value) => {
     const next = value || '';
     setCode(next);
@@ -284,6 +306,7 @@ function TestAttempt({ test, onBack }) {
   };
 
   const handlePasteBlocked = () => {
+    if (!pasteDisabled) return;
     setPasteCount((prev) => prev + 1);
     setPasteWarning('Pasting is disabled during the test.');
     if (pasteWarningTimerRef.current) {
@@ -331,6 +354,7 @@ function TestAttempt({ test, onBack }) {
     try {
       const safeResponse = await runCodeFor(currentQuestion, code, language, true);
       if (!safeResponse) return;
+      const timing = getTimingFromResult(safeResponse);
 
       await api.submitSolution({
         question_id: currentQuestion.id,
@@ -341,6 +365,8 @@ function TestAttempt({ test, onBack }) {
         passed: safeResponse.summary.passed,
         total: safeResponse.summary.total,
         auto_submit: false,
+        execution_time_ms: timing.executionTimeMs,
+        compilation_time_ms: timing.compilationTimeMs,
       });
 
       setSubmitSuccess(`Submitted successfully! Score: ${safeResponse.summary.score}%`);
@@ -382,6 +408,7 @@ function TestAttempt({ test, onBack }) {
           const codeText = codeByQuestionId[q.id] ?? (DEFAULT_CODE[lang] || DEFAULT_CODE.python);
           const safeResponse = await runCodeFor(q, codeText, lang, true);
           if (!safeResponse) continue;
+          const timing = getTimingFromResult(safeResponse);
 
           await api.submitSolution({
             question_id: q.id,
@@ -392,6 +419,8 @@ function TestAttempt({ test, onBack }) {
             passed: safeResponse.summary.passed,
             total: safeResponse.summary.total,
             auto_submit: true,
+            execution_time_ms: timing.executionTimeMs,
+            compilation_time_ms: timing.compilationTimeMs,
           });
 
           const newSubmission = {
@@ -517,7 +546,7 @@ function TestAttempt({ test, onBack }) {
               Tab Switch Limit Exceeded
             </div>
             <div style={{ fontSize: '13px', color: 'rgba(226,232,240,0.75)', marginBottom: '20px', lineHeight: 1.6 }}>
-              You switched tabs more than {TAB_SWITCH_LIMIT} times. This test has been forfeited and you can’t continue.
+              You switched tabs more than {tabSwitchLimit} times. This test has been forfeited and you can’t continue.
             </div>
             <button
               onClick={onBack}
@@ -588,19 +617,21 @@ function TestAttempt({ test, onBack }) {
               {formatTime(timeLeft)}
             </div>
           )}
-          <div style={{
-            padding: '6px 10px',
-            borderRadius: '8px',
-            border: '1px solid #1f2937',
-            background: tabSwitches > TAB_SWITCH_LIMIT ? 'rgba(248,113,113,0.2)' : 'rgba(15,23,42,0.7)',
-            color: tabSwitches > TAB_SWITCH_LIMIT ? '#fecaca' : '#e5e7eb',
-            fontSize: '12px',
-            fontWeight: 600,
-            minWidth: '90px',
-            textAlign: 'center'
-          }}>
-            Tabs: {tabSwitches}/{TAB_SWITCH_LIMIT}
-          </div>
+          {tabSwitchEnabled && (
+            <div style={{
+              padding: '6px 10px',
+              borderRadius: '8px',
+              border: '1px solid #1f2937',
+              background: tabSwitches > tabSwitchLimit ? 'rgba(248,113,113,0.2)' : 'rgba(15,23,42,0.7)',
+              color: tabSwitches > tabSwitchLimit ? '#fecaca' : '#e5e7eb',
+              fontSize: '12px',
+              fontWeight: 600,
+              minWidth: '90px',
+              textAlign: 'center'
+            }}>
+              Tabs: {tabSwitches}/{tabSwitchLimit}
+            </div>
+          )}
           <div style={{
             padding: '6px 10px',
             borderRadius: '8px',
@@ -734,7 +765,7 @@ function TestAttempt({ test, onBack }) {
               onChange={handleCodeChange}
               language={language}
               readOnly={isBusy}
-              disablePaste={true}
+              disablePaste={pasteDisabled}
               onPasteBlocked={handlePasteBlocked}
             />
           </div>
