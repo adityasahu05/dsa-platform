@@ -1,16 +1,22 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Union, List
-import requests
+import asyncio
+import httpx
 import time
 import os
-import concurrent.futures
 
 router = APIRouter()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 JUDGE0_URL = "https://ce.judge0.com"
 JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTH_TOKEN", "")
+JUDGE0_TIMEOUT_SECONDS = float(os.getenv("JUDGE0_TIMEOUT_SECONDS", "15"))
+SUBMIT_CONCURRENCY = int(os.getenv("JUDGE0_SUBMIT_CONCURRENCY", "6"))
+POLL_CONCURRENCY = int(os.getenv("JUDGE0_POLL_CONCURRENCY", "12"))
+
+_submit_semaphore = asyncio.Semaphore(max(1, SUBMIT_CONCURRENCY))
+_poll_semaphore = asyncio.Semaphore(max(1, POLL_CONCURRENCY))
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -56,8 +62,14 @@ def get_language_id(language: str) -> int:
         )
     return LANGUAGE_IDS[lang]
 
-def submit_token(code: str, language_id: int, stdin: str,
-                 time_limit: float, memory_limit: int) -> str:
+async def submit_token(
+    client: httpx.AsyncClient,
+    code: str,
+    language_id: int,
+    stdin: str,
+    time_limit: float,
+    memory_limit: int,
+) -> str:
     """Submit a single test case to Judge0 and return the token. Does NOT poll."""
     payload = {
         "source_code": code,
@@ -67,20 +79,20 @@ def submit_token(code: str, language_id: int, stdin: str,
         "memory_limit": memory_limit,
         "enable_per_process_and_thread_time_limit": False,
     }
-    resp = requests.post(
-        f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=false",
-        json=payload,
-        headers=HEADERS,
-        timeout=15,
-    )
+    async with _submit_semaphore:
+        resp = await client.post(
+            f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=false",
+            json=payload,
+            headers=HEADERS,
+        )
     if resp.status_code == 404 and "Application not found" in resp.text:
         # Fallback to public Judge0 CE without auth header
-        resp = requests.post(
-            "https://ce.judge0.com/submissions?base64_encoded=false&wait=false",
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=15,
-        )
+        async with _submit_semaphore:
+            resp = await client.post(
+                "https://ce.judge0.com/submissions?base64_encoded=false&wait=false",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
     if resp.status_code not in (200, 201):
         raise HTTPException(
             status_code=502,
@@ -91,17 +103,22 @@ def submit_token(code: str, language_id: int, stdin: str,
         raise HTTPException(status_code=502, detail="Judge0 did not return a submission token")
     return token
 
-def poll_token(token: str, max_wait_seconds: int = 30, poll_interval: float = 0.4) -> dict:
+async def poll_token(
+    client: httpx.AsyncClient,
+    token: str,
+    max_wait_seconds: int = 30,
+    poll_interval: float = 0.6,
+) -> dict:
     """Poll a single Judge0 token until it finishes. Returns the result dict."""
     start = time.time()
     while time.time() - start < max_wait_seconds:
-        time.sleep(poll_interval)
+        await asyncio.sleep(poll_interval)
         try:
-            resp = requests.get(
-                f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
-                headers=HEADERS,
-                timeout=15,
-            )
+            async with _poll_semaphore:
+                resp = await client.get(
+                    f"{JUDGE0_URL}/submissions/{token}?base64_encoded=false",
+                    headers=HEADERS,
+                )
         except Exception:
             continue
         if resp.status_code != 200:
@@ -173,11 +190,11 @@ async def execute_code(request: ExecuteRequest):
 
     # ── Step 1: Submit ALL test cases in parallel ──────────────────────────────
     # This fires off all submissions at once instead of one-by-one.
-    tokens = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [
-            executor.submit(
-                submit_token,
+    timeout = httpx.Timeout(JUDGE0_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        submit_tasks = [
+            submit_token(
+                client,
                 request.code,
                 language_id,
                 tc.input,
@@ -186,18 +203,12 @@ async def execute_code(request: ExecuteRequest):
             )
             for tc in request.test_cases
         ]
-        for future in futures:
-            tokens.append(future.result())  # raises HTTPException on failure
+        tokens = await asyncio.gather(*submit_tasks)
 
-    # ── Step 2: Brief warmup sleep (once, not per test case) ───────────────────
-    time.sleep(0.3)
+        await asyncio.sleep(0.3)
 
-    # ── Step 3: Poll ALL tokens in parallel ────────────────────────────────────
-    judge0_results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        poll_futures = [executor.submit(poll_token, token, 30, 0.4) for token in tokens]
-        for future in poll_futures:
-            judge0_results.append(future.result())  # raises HTTPException on timeout
+        poll_tasks = [poll_token(client, token, 30, 0.6) for token in tokens]
+        judge0_results = await asyncio.gather(*poll_tasks)
 
     # ── Step 4: Parse results ──────────────────────────────────────────────────
     results = []
@@ -255,11 +266,12 @@ async def execute_code(request: ExecuteRequest):
 @router.get("/api/execute/health")
 async def execution_health():
     try:
-        resp = requests.get(
-            f"{JUDGE0_URL}/system_info",
-            headers=HEADERS,
-            timeout=5
-        )
+        timeout = httpx.Timeout(5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(
+                f"{JUDGE0_URL}/system_info",
+                headers=HEADERS,
+            )
         if resp.status_code == 200:
             return {"status": "ok", "judge0": "reachable", "url": JUDGE0_URL}
         return {"status": "degraded", "judge0": f"HTTP {resp.status_code}"}
