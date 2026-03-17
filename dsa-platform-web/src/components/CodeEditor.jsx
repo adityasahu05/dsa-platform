@@ -73,6 +73,7 @@ export default function CodeEditor({
       }}
     >
       <Editor
+        key={disablePaste ? 'paste-blocked' : 'paste-allowed'}
         height="100%"
         language={getMonacoLanguage(language)}
         value={code}
