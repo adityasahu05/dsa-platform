@@ -305,9 +305,21 @@ function TestAttempt({ test, onBack }) {
     }
   };
 
+  const recordPaste = () => {
+    if (!test?.id) return;
+    setPasteCount((prev) => {
+      const next = prev + 1;
+      void api.logPaste(test.id, next, new Date().toISOString()).catch(() => {});
+      return next;
+    });
+  };
+
+  const handlePasteDetected = () => {
+    recordPaste();
+  };
+
   const handlePasteBlocked = () => {
     if (!pasteDisabled) return;
-    setPasteCount((prev) => prev + 1);
     setPasteWarning('Pasting is disabled during the test.');
     if (pasteWarningTimerRef.current) {
       clearTimeout(pasteWarningTimerRef.current);
@@ -767,6 +779,7 @@ function TestAttempt({ test, onBack }) {
               readOnly={isBusy}
               disablePaste={pasteDisabled}
               onPasteBlocked={handlePasteBlocked}
+              onPasteDetected={handlePasteDetected}
             />
           </div>
 
