@@ -33,6 +33,9 @@ class TestCreate(BaseModel):
     end_date: Optional[str] = None
     test_type: str = "invite_only"
     tags: Optional[str] = ""
+    anti_paste_enabled: Optional[bool] = True
+    tab_switch_enabled: Optional[bool] = True
+    tab_switch_limit: Optional[int] = 3
 
 
 class TestUpdate(BaseModel):
@@ -44,6 +47,9 @@ class TestUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     duration_minutes: Optional[int] = None
+    anti_paste_enabled: Optional[bool] = None
+    tab_switch_enabled: Optional[bool] = None
+    tab_switch_limit: Optional[int] = None
 
 
 class QuestionCreate(BaseModel):
@@ -173,6 +179,9 @@ def format_test(test_id: str, test: dict) -> dict:
         "tags": [t.strip() for t in (test.get("tags") or "").split(",") if t.strip()],
         "assessment_id": test.get("assessment_id", ""),
         "created_at": test.get("created_at"),
+        "anti_paste_enabled": test.get("anti_paste_enabled", True),
+        "tab_switch_enabled": test.get("tab_switch_enabled", True),
+        "tab_switch_limit": test.get("tab_switch_limit", 3),
     }
 
 
@@ -191,6 +200,9 @@ def get_all_tests(current_user: dict = Depends(require_teacher)):
 @router.post("/tests")
 def create_test(test: TestCreate, current_user: dict = Depends(require_teacher)):
     test_id = str(uuid.uuid4())
+    tab_switch_limit = int(test.tab_switch_limit or 3)
+    if tab_switch_limit < 1:
+        tab_switch_limit = 1
     test_data = {
         "title": test.title,
         "description": test.description,
@@ -204,6 +216,9 @@ def create_test(test: TestCreate, current_user: dict = Depends(require_teacher))
         "tags": test.tags or "",
         "assessment_id": generate_assessment_id(),
         "created_at": datetime.utcnow().isoformat(),
+        "anti_paste_enabled": bool(test.anti_paste_enabled) if test.anti_paste_enabled is not None else True,
+        "tab_switch_enabled": bool(test.tab_switch_enabled) if test.tab_switch_enabled is not None else True,
+        "tab_switch_limit": tab_switch_limit,
     }
     db.reference(f"/tests/{test_id}").set(test_data)
     return format_test(test_id, test_data)
@@ -224,6 +239,11 @@ def update_test(test_id: str, data: TestUpdate, current_user: dict = Depends(req
     if data.title is not None: updates["title"] = data.title
     if data.description is not None: updates["description"] = data.description
     if data.duration_minutes is not None: updates["duration_minutes"] = data.duration_minutes
+    if data.anti_paste_enabled is not None: updates["anti_paste_enabled"] = data.anti_paste_enabled
+    if data.tab_switch_enabled is not None: updates["tab_switch_enabled"] = data.tab_switch_enabled
+    if data.tab_switch_limit is not None:
+        limit = int(data.tab_switch_limit)
+        updates["tab_switch_limit"] = max(1, limit)
     test_ref.update(updates)
     updated = test_ref.get()
     return format_test(test_id, updated)
@@ -559,7 +579,10 @@ def get_available_tests():
                 "question_count": q_count,
                 "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
                 "assessment_id": t.get("assessment_id", ""),  # ← ADD THIS
-                "created_at": t.get("created_at")
+                "created_at": t.get("created_at"),
+                "anti_paste_enabled": t.get("anti_paste_enabled", True),
+                "tab_switch_enabled": t.get("tab_switch_enabled", True),
+                "tab_switch_limit": t.get("tab_switch_limit", 3),
             })
     return result
 
@@ -618,6 +641,9 @@ def lookup_test(code: str):
                 "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
                 "assessment_id": t.get("assessment_id", ""),
                 "created_at": t.get("created_at"),
+                "anti_paste_enabled": t.get("anti_paste_enabled", True),
+                "tab_switch_enabled": t.get("tab_switch_enabled", True),
+                "tab_switch_limit": t.get("tab_switch_limit", 3),
             }
     raise HTTPException(status_code=404, detail="Test not found")
 
