@@ -9,6 +9,7 @@ export default function CodeEditor({
   readOnly = false,
   disablePaste = true,
   onPasteBlocked,
+  onPasteDetected,
 }) {
   const editorRef = useRef(null);
   const lastValueRef = useRef(code ?? '');
@@ -26,6 +27,10 @@ export default function CodeEditor({
 
   const handlePasteBlocked = () => {
     if (typeof onPasteBlocked === 'function') onPasteBlocked();
+  };
+
+  const handlePasteDetected = () => {
+    if (typeof onPasteDetected === 'function') onPasteDetected();
   };
 
   const handleEditorDidMount = (editor, monaco) => {
@@ -67,6 +72,7 @@ export default function CodeEditor({
     <div
       style={{ height: '100%', background: '#fff', border: '1px solid #e0e0e0' }}
       onPasteCapture={(e) => {
+        handlePasteDetected();
         if (!disablePaste) return;
         e.preventDefault();
         handlePasteBlocked();
