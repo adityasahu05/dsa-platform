@@ -3,7 +3,7 @@ uvicorn
 pydantic
 python-jose[cryptography]
 passlib[bcrypt]
-requests
+httpx
 python-multipart
 python-dotenv
 pydantic-settings
