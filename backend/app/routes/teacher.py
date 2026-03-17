@@ -108,6 +108,11 @@ class TabSwitchLogRequest(BaseModel):
     timestamp: Optional[str] = None
 
 
+class PasteLogRequest(BaseModel):
+    count: int
+    timestamp: Optional[str] = None
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def parse_languages(lang_str: str) -> List[str]:
@@ -495,6 +500,8 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 "overall_score": 0,
                 "overall_submission_time_seconds": None,
                 "overall_submitted_at": None,
+                "tab_switches": attempt.get("tab_switches", 0),
+                "paste_count": attempt.get("paste_count", 0),
                 "questions": {},
             }
             if started_at:
@@ -551,6 +558,8 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
             "overall_score": 0,
             "overall_submission_time_seconds": None,
             "overall_submitted_at": None,
+            "tab_switches": attempt.get("tab_switches", 0),
+            "paste_count": attempt.get("paste_count", 0),
             "questions": {},
         }
         if started_at:
@@ -789,6 +798,28 @@ def log_tab_switch(
     event = {"count": data.count, "timestamp": ts}
     db.reference(f"/attempts/{test_id}/{current_user['id']}/tab_switch_events").push(event)
     attempt_ref.update({"tab_switches": data.count, "last_tab_switch_at": ts})
+    return {"logged": True, "count": data.count, "timestamp": ts}
+
+
+@router.post("/student/test/{test_id}/paste", tags=["student"])
+def log_paste(
+    test_id: str,
+    data: PasteLogRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    if attempt.get("forfeited"):
+        raise HTTPException(status_code=403, detail="Test forfeited.")
+
+    ts = data.timestamp or utcnow_iso()
+    event = {"count": data.count, "timestamp": ts}
+    db.reference(f"/attempts/{test_id}/{current_user['id']}/paste_events").push(event)
+    attempt_ref.update({"paste_count": data.count, "last_paste_at": ts})
     return {"logged": True, "count": data.count, "timestamp": ts}
 
 
