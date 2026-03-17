@@ -95,6 +95,8 @@ class SubmitRequest(BaseModel):
     passed: int
     total: int
     auto_submit: Optional[bool] = False
+    execution_time_ms: Optional[int] = None
+    compilation_time_ms: Optional[int] = None
 
 
 class ForfeitRequest(BaseModel):
@@ -459,6 +461,19 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
 
     duration_seconds = get_test_duration_seconds(test)
 
+    # Aggregate per-question stats
+    q_stats = {
+        qid: {
+            "count": 0,
+            "score_sum": 0.0,
+            "exec_sum": 0,
+            "exec_count": 0,
+            "comp_sum": 0,
+            "comp_count": 0,
+        }
+        for qid in questions.keys()
+    }
+
     # Build per-student aggregation
     student_rows = {}
     for sub in all_subs.values():
@@ -498,7 +513,23 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 "score": sub.get("score", 0),
                 "language": sub.get("language"),
                 "auto_submit": bool(sub.get("auto_submit", False)),
+                "execution_time_ms": sub.get("execution_time_ms"),
+                "compilation_time_ms": sub.get("compilation_time_ms"),
             }
+
+        # Per-question aggregates
+        if qid in q_stats:
+            qs = q_stats[qid]
+            qs["count"] += 1
+            qs["score_sum"] += float(sub.get("score", 0) or 0)
+            exec_ms = sub.get("execution_time_ms")
+            if exec_ms is not None:
+                qs["exec_sum"] += int(exec_ms)
+                qs["exec_count"] += 1
+            comp_ms = sub.get("compilation_time_ms")
+            if comp_ms is not None:
+                qs["comp_sum"] += int(comp_ms)
+                qs["comp_count"] += 1
 
         submitted_at = sub.get("submitted_at")
         if submitted_at:
@@ -530,20 +561,39 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     # Compute overall score and submission time per student
-    total_questions = len(question_list)
+    total_points = sum(int(q.get("points", 0) or 0) for q in question_list)
     for row in student_rows.values():
-        if total_questions > 0:
-            total_score = 0.0
+        if total_points > 0:
+            earned_points = 0.0
             for q in question_list:
                 qid = q["id"]
+                q_points = float(q.get("points", 0) or 0)
                 q_sub = row["questions"].get(qid)
-                total_score += float(q_sub.get("score", 0)) if q_sub else 0.0
-            row["overall_score"] = round(total_score / total_questions, 2)
+                q_score = float(q_sub.get("score", 0)) if q_sub else 0.0
+                earned_points += (q_score / 100.0) * q_points
+            row["overall_score"] = round((earned_points / total_points) * 100.0, 2)
         if row["started_at"] and row["overall_submitted_at"]:
             started_dt = parse_iso_ts(row["started_at"])
             submitted_dt = parse_iso_ts(row["overall_submitted_at"])
             if started_dt and submitted_dt:
                 row["overall_submission_time_seconds"] = max(0, int((submitted_dt - started_dt).total_seconds()))
+
+        # Aggregate execution/compilation time across submissions
+        total_exec = 0
+        total_comp = 0
+        has_exec = False
+        has_comp = False
+        for qid, qsub in row["questions"].items():
+            exec_ms = qsub.get("execution_time_ms")
+            comp_ms = qsub.get("compilation_time_ms")
+            if exec_ms is not None:
+                total_exec += int(exec_ms)
+                has_exec = True
+            if comp_ms is not None:
+                total_comp += int(comp_ms)
+                has_comp = True
+        row["total_execution_time_ms"] = total_exec if has_exec else None
+        row["total_compilation_time_ms"] = total_comp if has_comp else None
 
     # Sort by overall_submitted_at desc, then name
     sorted_rows = sorted(
@@ -552,11 +602,37 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
         reverse=True,
     )
 
+    # Attach per-question averages
+    enriched_questions = []
+    for q in question_list:
+        qid = q["id"]
+        stats = q_stats.get(qid)
+        if stats and stats["count"] > 0:
+            avg_score = round(stats["score_sum"] / stats["count"], 2)
+        else:
+            avg_score = 0
+        avg_exec = (
+            int(stats["exec_sum"] / stats["exec_count"])
+            if stats and stats["exec_count"] > 0
+            else None
+        )
+        avg_comp = (
+            int(stats["comp_sum"] / stats["comp_count"])
+            if stats and stats["comp_count"] > 0
+            else None
+        )
+        enriched_questions.append({
+            **q,
+            "average_score": avg_score,
+            "avg_execution_time_ms": avg_exec,
+            "avg_compilation_time_ms": avg_comp,
+        })
+
     return {
         "test_id": test_id,
         "test_title": test.get("title"),
         "duration_minutes": test.get("duration_minutes", 60),
-        "questions": question_list,
+        "questions": enriched_questions,
         "students": sorted_rows,
     }
 
@@ -798,6 +874,8 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
         "passed": data.passed,
         "total": data.total,
         "auto_submit": bool(data.auto_submit),
+        "execution_time_ms": data.execution_time_ms,
+        "compilation_time_ms": data.compilation_time_ms,
         "submitted_at": datetime.utcnow().isoformat(),
     }
     db.reference(f"/submissions/{sub_id}").set(submission)
