@@ -97,8 +97,74 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
     return `${m}m ${s}s`;
   };
 
+  const buildSubmissionRows = () => {
+    if (Array.isArray(detailedAnalytics?.students) && detailedAnalytics.students.length > 0) {
+      return detailedAnalytics.students.map((s) => ({
+        student_id: s.student_id,
+        student_name: s.student_name || 'Unknown',
+        student_email: s.student_email || 'Unknown',
+        started_at: s.started_at,
+        deadline_at: s.deadline_at,
+        overall_submitted_at: s.overall_submitted_at,
+        overall_score: typeof s.overall_score === 'number' ? s.overall_score : 0,
+      }));
+    }
+
+    if (!Array.isArray(submissions) || submissions.length === 0) return [];
+
+    const byStudent = {};
+    for (const sub of submissions) {
+      const studentId = sub.student_id || sub.studentId || 'unknown';
+      if (!byStudent[studentId]) {
+        byStudent[studentId] = {
+          student_id: studentId,
+          student_name: sub.student_name || 'Unknown',
+          student_email: sub.student_email || 'Unknown',
+          scoresByQuestion: {},
+          first_submitted_at: sub.submitted_at || null,
+          last_submitted_at: sub.submitted_at || null,
+        };
+      }
+      const row = byStudent[studentId];
+      if (sub.submitted_at) {
+        if (!row.first_submitted_at || sub.submitted_at < row.first_submitted_at) {
+          row.first_submitted_at = sub.submitted_at;
+        }
+        if (!row.last_submitted_at || sub.submitted_at > row.last_submitted_at) {
+          row.last_submitted_at = sub.submitted_at;
+        }
+      }
+      if (sub.question_id) {
+        row.scoresByQuestion[sub.question_id] = Number(sub.score || 0);
+      }
+    }
+
+    const totalQuestions = questions.length || 0;
+    return Object.values(byStudent).map((row) => {
+      const totalScore = totalQuestions
+        ? questions.reduce((sum, q) => sum + (row.scoresByQuestion[q.id] || 0), 0)
+        : 0;
+      const overallScore = totalQuestions ? Math.round((totalScore / totalQuestions) * 100) / 100 : 0;
+      const started_at = row.first_submitted_at || null;
+      const deadline_at = started_at
+        ? new Date(new Date(started_at).getTime() + (test.duration_minutes || 60) * 60000).toISOString()
+        : null;
+      return {
+        student_id: row.student_id,
+        student_name: row.student_name,
+        student_email: row.student_email,
+        started_at,
+        deadline_at,
+        overall_submitted_at: row.last_submitted_at,
+        overall_score: overallScore,
+      };
+    });
+  };
+
   const linkCode = test?.assessment_id || test?.id;
   const shareUrl = linkCode ? `${window.location.origin}/match/${linkCode}` : '';
+  const submissionRows = buildSubmissionRows();
+  const isDetailedAvailable = Array.isArray(detailedAnalytics?.students) && detailedAnalytics.students.length > 0;
 
   const handleCopyLink = async () => {
     if (!shareUrl) return;
@@ -135,7 +201,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
             <p style={{ fontSize: '14px', color: '#666' }}>{test.description || 'No description'}</p>
             <div style={{ display: 'flex', gap: '20px', marginTop: '12px', fontSize: '13px', color: '#999' }}>
               <span><Clock size={14} style={{ verticalAlign: 'middle' }} /> {test.duration_minutes} mins</span>
-              <span><Users size={14} style={{ verticalAlign: 'middle' }} /> {submissions.length} submissions</span>
+              <span><Users size={14} style={{ verticalAlign: 'middle' }} /> {submissionRows.length} submissions</span>
               <span>{questions.length} questions</span>
             </div>
           </div>
@@ -315,7 +381,18 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
             {/* Submissions Tab */}
             {activeTab === 'submissions' && (
               <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                {Array.isArray(detailedAnalytics?.students) && detailedAnalytics.students.length > 0 ? (
+                {!isDetailedAvailable && submissionRows.length > 0 && (
+                  <div style={{
+                    padding: '10px 16px',
+                    fontSize: '12px',
+                    color: '#92400e',
+                    backgroundColor: '#fffbeb',
+                    borderBottom: '1px solid #fde68a',
+                  }}>
+                    Showing estimated submission data (detailed analytics not available).
+                  </div>
+                )}
+                {submissionRows.length > 0 ? (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
@@ -327,15 +404,15 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {detailedAnalytics.students.map((s) => (
-                        <tr key={s.student_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      {submissionRows.map((s, idx) => (
+                        <tr key={`${s.student_id}-${s.student_email}-${idx}`} style={{ borderBottom: '1px solid #f0f0f0' }}>
                           <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_name || 'Unknown'}</td>
                           <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_email || 'Unknown'}</td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDateTime(s.started_at)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                            {formatDateTime(s.deadline_at)}
+                            {formatDateTime(s.overall_submitted_at || s.deadline_at)}
                           </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{
@@ -355,44 +432,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                     <Users size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
                     <p style={{ color: '#999' }}>No submissions yet</p>
                   </div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                      <tr>
-                        {['STUDENT ID', 'QUESTION', 'SCORE', 'VERDICT', 'TIME', 'SUBMITTED'].map(h => (
-                          <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submissions.map((submission) => (
-                        <tr key={submission.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>Student #{submission.student_id}</td>
-                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>Q#{submission.question_id}</td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={{
-                              padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                              backgroundColor: submission.score === 100 ? '#E8F5E9' : submission.score >= 50 ? '#FFF3E0' : '#FFEBEE',
-                              color: submission.score === 100 ? '#4CAF50' : submission.score >= 50 ? '#FF9800' : '#F44336'
-                            }}>{submission.score}%</span>
-                          </td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: submission.verdict === 'PASS' ? '#4CAF50' : '#F44336' }}>
-                              {submission.verdict === 'PASS' ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                              {submission.verdict}
-                            </span>
-                          </td>
-                          <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>{submission.execution_time_ms}ms</td>
-                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
-                            {new Date(submission.submitted_at).toLocaleString('en-IN')}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
+                ) : null}
               </div>
             )}
 
