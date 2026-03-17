@@ -26,7 +26,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
 
   useEffect(() => {
     fetchTestData();
-    const id = setInterval(fetchTestData, 1000);
+    const id = setInterval(fetchTestData, 20000);
     return () => clearInterval(id);
   }, [test.id]);
 
