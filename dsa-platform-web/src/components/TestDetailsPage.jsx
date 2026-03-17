@@ -333,9 +333,8 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           'EMAIL ID',
                           'TEST START',
                           'TEST END',
-                          'TOTAL EXEC TIME',
-                          'TOTAL COMP TIME',
-                          'OVERALL TIME',
+                          'OVERALL COMP TIME',
+                          'OVERALL SUBMIT TIME',
                           'OVERALL MARKS',
                           'TAB SWITCHES',
                           'PASTED'
@@ -356,9 +355,6 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDateTime(s.overall_submitted_at || s.deadline_at)}
-                          </td>
-                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                            {formatDurationMs(s.total_execution_time_ms)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDurationMs(s.total_compilation_time_ms)}
