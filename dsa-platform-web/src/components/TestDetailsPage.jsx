@@ -16,6 +16,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
   const [activeTab, setActiveTab] = useState('questions');
   const [loading, setLoading] = useState(true);
   const [linkStatus, setLinkStatus] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState(null);
 
   // Edit modal state
   const [editingQuestion, setEditingQuestion] = useState(null);
@@ -126,6 +127,14 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
       setLinkStatus('Copy failed');
       setTimeout(() => setLinkStatus(''), 1500);
     }
+  };
+
+  const openStudentDetails = (student) => {
+    setSelectedStudent(student || null);
+  };
+
+  const closeStudentDetails = () => {
+    setSelectedStudent(null);
   };
 
   return (
@@ -357,7 +366,24 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                     <tbody>
                       {detailedAnalytics.students.map((s) => (
                         <tr key={s.student_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_name || 'Unknown'}</td>
+                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>
+                            <button
+                              onClick={() => openStudentDetails(s)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 0,
+                                margin: 0,
+                                color: '#2196F3',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 600,
+                              }}
+                              title="View student details"
+                            >
+                              {s.student_name || 'Unknown'}
+                            </button>
+                          </td>
                           <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_email || 'Unknown'}</td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDateTime(s.started_at)}
@@ -676,6 +702,112 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
               >
                 {deleteLoading ? 'Deleting...' : 'Yes, Delete'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Details Modal */}
+      {selectedStudent && detailedAnalytics && Array.isArray(detailedAnalytics.questions) && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '16px'
+        }}
+          onClick={closeStudentDetails}
+        >
+          <div style={{
+            backgroundColor: '#fff', borderRadius: '8px', padding: '24px',
+            width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto',
+            boxShadow: '0 6px 24px rgba(0,0,0,0.18)'
+          }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 700, color: '#333' }}>
+                  {selectedStudent.student_name || 'Student'}
+                </div>
+                <div style={{ fontSize: '13px', color: '#666' }}>
+                  {selectedStudent.student_email || '—'}
+                </div>
+              </div>
+              <button
+                onClick={closeStudentDetails}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: '4px' }}
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#999' }}>Test Start</div>
+                <div style={{ fontSize: '13px', color: '#333', fontWeight: 600 }}>{formatDateTime(selectedStudent.started_at)}</div>
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#999' }}>Last Submit</div>
+                <div style={{ fontSize: '13px', color: '#333', fontWeight: 600 }}>{formatDateTime(selectedStudent.overall_submitted_at || selectedStudent.deadline_at)}</div>
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#999' }}>Time to Submit</div>
+                <div style={{ fontSize: '13px', color: '#333', fontWeight: 600 }}>{formatDuration(selectedStudent.overall_submission_time_seconds)}</div>
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#999' }}>Total w/ Exec</div>
+                <div style={{ fontSize: '13px', color: '#333', fontWeight: 600 }}>
+                  {formatCompletionWithExec(
+                    selectedStudent.overall_submission_time_seconds,
+                    selectedStudent.total_execution_time_ms,
+                    selectedStudent.total_compilation_time_ms
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '820px' }}>
+                <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                  <tr>
+                    {['QUESTION', 'SCORE', 'LANG', 'SUBMITTED', 'EXEC TIME', 'COMP TIME', 'AUTO'].map(h => (
+                      <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailedAnalytics.questions.map((q) => {
+                    const qEntry = selectedStudent.questions?.[q.id] || null;
+                    return (
+                      <tr key={q.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '10px 12px', fontSize: '13px', color: '#333' }}>
+                          {q.title || q.id}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '13px', color: '#333' }}>
+                          {qEntry?.score ?? '—'}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>
+                          {qEntry?.language ? String(qEntry.language).toUpperCase() : '—'}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>
+                          {formatDateTime(qEntry?.submitted_at)}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>
+                          {formatDurationMs(qEntry?.execution_time_ms)}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>
+                          {formatDurationMs(qEntry?.compilation_time_ms)}
+                        </td>
+                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>
+                          {qEntry?.auto_submit ? 'Yes' : 'No'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
