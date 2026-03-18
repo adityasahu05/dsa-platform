@@ -350,9 +350,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           'EMAIL ID',
                           'TEST START',
                           'TEST END',
-                          'OVERALL COMP TIME',
-                          'OVERALL SUBMIT TIME',
-                          'TOTAL TIME (WITH EXEC)',
+                          'SUBMISSION TIME',
                           'OVERALL MARKS',
                           'TAB SWITCHES',
                           'PASTED'
@@ -392,17 +390,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                             {formatDateTime(s.overall_submitted_at || s.deadline_at)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                            {formatDurationMs(s.total_compilation_time_ms)}
-                          </td>
-                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDuration(s.overall_submission_time_seconds)}
-                          </td>
-                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                            {formatCompletionWithExec(
-                              s.overall_submission_time_seconds,
-                              s.total_execution_time_ms,
-                              s.total_compilation_time_ms
-                            )}
                           </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{
@@ -438,7 +426,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
-                        {['STUDENT', 'QUESTION', 'SCORE', 'VERDICT', 'EXEC TIME', 'COMP TIME', 'TOTAL (EXEC+COMP)', 'SUBMITTED'].map(h => (
+                        {['STUDENT', 'QUESTION', 'SCORE', 'EXEC TIME', 'SUBMISSION TIME', 'SUBMITTED'].map(h => (
                           <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
                             {h}
                           </th>
@@ -446,7 +434,11 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {submissions.map((submission) => (
+                      {submissions.map((submission) => {
+                        const studentOverall = detailedAnalytics?.students?.find(
+                          s => s.student_id === submission.student_id
+                        );
+                        return (
                         <tr key={submission.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                           <td style={{ padding: '12px 16px', fontSize: '14px' }}>
                             <div style={{ fontWeight: 600, color: '#333' }}>
@@ -468,28 +460,17 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                               color: submission.score === 100 ? '#4CAF50' : submission.score >= 50 ? '#FF9800' : '#F44336'
                             }}>{submission.score}%</span>
                           </td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: submission.verdict === 'PASS' ? '#4CAF50' : '#F44336' }}>
-                              {submission.verdict === 'PASS' ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                              {submission.verdict}
-                            </span>
-                          </td>
                           <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
                             {formatDurationMs(submission.execution_time_ms)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                            {formatDurationMs(submission.compilation_time_ms)}
-                          </td>
-                          <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                            {formatDurationMs(
-                              (submission.execution_time_ms || 0) + (submission.compilation_time_ms || 0)
-                            )}
+                            {formatDuration(studentOverall?.overall_submission_time_seconds)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
                             {new Date(submission.submitted_at).toLocaleString('en-IN')}
                           </td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody>
                   </table>
                 )}
