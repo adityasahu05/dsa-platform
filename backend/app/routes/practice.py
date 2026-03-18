@@ -647,13 +647,25 @@ router = APIRouter()
 from app.routes.practice_problems import PRACTICE_PROBLEMS
 
 JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "https://ce.judge0.com")
+JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTH_TOKEN", "")
 JUDGE0_TIMEOUT_SECONDS = float(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
 JUDGE0_POLL_INTERVAL = float(os.getenv("JUDGE0_POLL_INTERVAL", "0.6"))
 JUDGE0_MAX_POLL = int(os.getenv("JUDGE0_MAX_POLL", "40"))
 JUDGE0_MAX_INFLIGHT = int(os.getenv("JUDGE0_MAX_INFLIGHT", "120"))
 
+HEADERS = {
+    "Content-Type": "application/json",
+}
+
+if JUDGE0_AUTH_TOKEN:
+    HEADERS["X-Auth-Token"] = JUDGE0_AUTH_TOKEN
+
 _client_limits = httpx.Limits(max_connections=200, max_keepalive_connections=50)
-_client = httpx.AsyncClient(timeout=JUDGE0_TIMEOUT_SECONDS, limits=_client_limits)
+_client = httpx.AsyncClient(
+    timeout=JUDGE0_TIMEOUT_SECONDS,
+    limits=_client_limits,
+    headers=HEADERS,
+)
 _judge0_semaphore = asyncio.Semaphore(JUDGE0_MAX_INFLIGHT)
 
 LANGUAGE_IDS = {
@@ -853,5 +865,4 @@ async def submit_code(req: SubmitRequest):
         "xp_gain":        xp_gain,
         "results":        results,
     }
-
 
