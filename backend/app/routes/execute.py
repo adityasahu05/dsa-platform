@@ -9,7 +9,7 @@ import os
 router = APIRouter()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JUDGE0_URL = "https://ce.judge0.com"
+JUDGE0_URL = os.getenv("JUDGE0_URL", "https://ce.judge0.com")
 JUDGE0_AUTH_TOKEN = os.getenv("JUDGE0_AUTH_TOKEN", "")
 JUDGE0_TIMEOUT_SECONDS = float(os.getenv("JUDGE0_TIMEOUT_SECONDS", "15"))
 SUBMIT_CONCURRENCY = int(os.getenv("JUDGE0_SUBMIT_CONCURRENCY", "6"))
@@ -85,14 +85,6 @@ async def submit_token(
             json=payload,
             headers=HEADERS,
         )
-    if resp.status_code == 404 and "Application not found" in resp.text:
-        # Fallback to public Judge0 CE without auth header
-        async with _submit_semaphore:
-            resp = await client.post(
-                "https://ce.judge0.com/submissions?base64_encoded=false&wait=false",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
     if resp.status_code not in (200, 201):
         raise HTTPException(
             status_code=502,
@@ -273,7 +265,7 @@ async def execution_health():
                 headers=HEADERS,
             )
         if resp.status_code == 200:
-            return {"status": "ok", "judge0": "reachable", "url": JUDGE0_URL}
+            return {"status": "ok", "judge0": "reachable"}
         return {"status": "degraded", "judge0": f"HTTP {resp.status_code}"}
     except Exception as e:
         return {"status": "error", "judge0": str(e)}
