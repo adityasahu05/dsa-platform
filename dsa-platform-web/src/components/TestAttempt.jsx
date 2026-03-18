@@ -268,6 +268,9 @@ function TestAttempt({ test, onBack }) {
     if (!response || typeof response !== 'object') throw new Error('Invalid response from execution server');
     const safeResponse = {
       ...response,
+      compilation_time_ms: typeof response?.compilation_time_ms === 'number'
+        ? response.compilation_time_ms
+        : null,
       results: Array.isArray(response.results) ? response.results : [],
       summary: response.summary && typeof response.summary === 'object'
         ? response.summary : { score: 0, passed: 0, total: 0 },
