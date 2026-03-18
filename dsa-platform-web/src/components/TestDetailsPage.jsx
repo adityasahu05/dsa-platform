@@ -324,7 +324,8 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
             {/* Submissions Tab */}
             {activeTab === 'submissions' && (
               <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                {Array.isArray(detailedAnalytics?.students) && detailedAnalytics.students.length > 0 ? (
+                {detailedAnalytics && Array.isArray(detailedAnalytics.students) ? (
+                  detailedAnalytics.students.length > 0 ? (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
@@ -381,6 +382,12 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                       ))}
                     </tbody>
                   </table>
+                ) : (
+                  <div style={{ padding: '60px', textAlign: 'center' }}>
+                    <Users size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
+                    <p style={{ color: '#999' }}>No submissions yet</p>
+                  </div>
+                )
                 ) : submissions.length === 0 ? (
                   <div style={{ padding: '60px', textAlign: 'center' }}>
                     <Users size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
@@ -390,7 +397,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
-                        {['STUDENT ID', 'QUESTION', 'SCORE', 'VERDICT', 'EXEC TIME', 'COMP TIME', 'SUBMITTED'].map(h => (
+                        {['STUDENT', 'QUESTION', 'SCORE', 'VERDICT', 'EXEC TIME', 'COMP TIME', 'SUBMITTED'].map(h => (
                           <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
                             {h}
                           </th>
@@ -400,8 +407,19 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                     <tbody>
                       {submissions.map((submission) => (
                         <tr key={submission.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>Student #{submission.student_id}</td>
-                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>Q#{submission.question_id}</td>
+                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>
+                            <div style={{ fontWeight: 600, color: '#333' }}>
+                              {submission.student_name || `Student #${submission.student_id}`}
+                            </div>
+                            {submission.student_email && (
+                              <div style={{ fontSize: '12px', color: '#999', marginTop: '2px' }}>
+                                {submission.student_email}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '14px' }}>
+                            {submission.question_title || `Q#${submission.question_id}`}
+                          </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{
                               padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
