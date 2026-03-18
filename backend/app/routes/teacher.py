@@ -522,7 +522,6 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 "auto_submit": bool(sub.get("auto_submit", False)),
                 "execution_time_ms": sub.get("execution_time_ms"),
                 "compilation_time_ms": sub.get("compilation_time_ms"),
-                "submission_time_seconds": None,
             }
 
         # Per-question aggregates
@@ -604,17 +603,6 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 has_comp = True
         row["total_execution_time_ms"] = total_exec if has_exec else None
         row["total_compilation_time_ms"] = total_comp if has_comp else None
-
-        # Per-question submission time (seconds since test start)
-        if row["started_at"]:
-            started_dt = parse_iso_ts(row["started_at"])
-            if started_dt:
-                for qsub in row["questions"].values():
-                    submitted_dt = parse_iso_ts(qsub.get("submitted_at"))
-                    if submitted_dt:
-                        qsub["submission_time_seconds"] = max(
-                            0, int((submitted_dt - started_dt).total_seconds())
-                        )
 
     # Sort by overall_submitted_at desc, then name
     sorted_rows = sorted(
