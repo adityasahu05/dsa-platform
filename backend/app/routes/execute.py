@@ -69,8 +69,8 @@ async def submit_token(
     stdin: str,
     time_limit: float,
     memory_limit: int,
-) -> str:
-    """Submit a single test case to Judge0 and return the token. Does NOT poll."""
+) -> tuple[str, float]:
+    """Submit a single test case to Judge0 and return (token, submitted_at_monotonic)."""
     payload = {
         "source_code": code,
         "language_id": language_id,
@@ -79,6 +79,7 @@ async def submit_token(
         "memory_limit": memory_limit,
         "enable_per_process_and_thread_time_limit": False,
     }
+    submitted_at = time.monotonic()
     async with _submit_semaphore:
         resp = await client.post(
             f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=false",
@@ -93,15 +94,15 @@ async def submit_token(
     token = resp.json().get("token")
     if not token:
         raise HTTPException(status_code=502, detail="Judge0 did not return a submission token")
-    return token
+    return token, submitted_at
 
 async def poll_token(
     client: httpx.AsyncClient,
     token: str,
     max_wait_seconds: int = 30,
     poll_interval: float = 0.6,
-) -> dict:
-    """Poll a single Judge0 token until it finishes. Returns the result dict."""
+) -> tuple[dict, float]:
+    """Poll a single Judge0 token until it finishes. Returns (result, finished_at_monotonic)."""
     start = time.time()
     while time.time() - start < max_wait_seconds:
         await asyncio.sleep(poll_interval)
@@ -118,7 +119,7 @@ async def poll_token(
         result = resp.json()
         status_id = result.get("status", {}).get("id", 0)
         if status_id not in (1, 2):  # 1=In Queue, 2=Processing
-            return result
+            return result, time.monotonic()
     raise HTTPException(status_code=504, detail="Judge0 execution timed out (polling)")
 
 def parse_result(judge0_result: dict, test_case: TestCase) -> dict:
@@ -199,7 +200,7 @@ async def execute_code(request: ExecuteRequest):
 
         await asyncio.sleep(0.3)
 
-        poll_tasks = [poll_token(client, token, 30, 0.6) for token in tokens]
+        poll_tasks = [poll_token(client, token, 30, 0.6) for token, _ in tokens]
         judge0_results = await asyncio.gather(*poll_tasks)
 
     # ── Step 4: Parse results ──────────────────────────────────────────────────
@@ -208,8 +209,19 @@ async def execute_code(request: ExecuteRequest):
     total_score = 0.0
     max_score = sum(tc.points for tc in request.test_cases)
     compilation_error = None
+    compiled_langs = {"c", "cpp", "java"}
+    compile_time_ms = None
+    durations_ms = []
+    for (token, submitted_at), (judge0_result, finished_at) in zip(tokens, judge0_results):
+        try:
+            durations_ms.append((finished_at - submitted_at) * 1000.0)
+        except Exception:
+            pass
+    if request.language.lower().strip() in compiled_langs and durations_ms:
+        # Best-effort approximation: fastest submission latency (includes queue + exec)
+        compile_time_ms = round(min(durations_ms), 2)
 
-    for tc, judge0_result in zip(request.test_cases, judge0_results):
+    for tc, (judge0_result, _finished_at) in zip(request.test_cases, judge0_results):
         try:
             result = parse_result(judge0_result, tc)
             if result.get("status") == "Compilation Error" and not compilation_error:
@@ -246,6 +258,7 @@ async def execute_code(request: ExecuteRequest):
         "max_score": max_score,
         "success": total_passed == len(request.test_cases),
         "compilation_error": compilation_error,
+        "compilation_time_ms": compile_time_ms,
         "summary": {
             "score": score,
             "passed": total_passed,
