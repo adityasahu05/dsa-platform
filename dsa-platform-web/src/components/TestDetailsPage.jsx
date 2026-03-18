@@ -106,6 +106,13 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
     return `${s}.${String(rem).padStart(3, '0')}s`;
   };
 
+  const formatCompletionWithExec = (baseSeconds, execMs, compMs) => {
+    if (baseSeconds === null || baseSeconds === undefined) return '—';
+    const execSec = execMs ? execMs / 1000 : 0;
+    const compSec = compMs ? compMs / 1000 : 0;
+    return formatDuration(baseSeconds + execSec + compSec);
+  };
+
   const linkCode = test?.assessment_id || test?.id;
   const shareUrl = linkCode ? `${window.location.origin}/match/${linkCode}` : '';
 
@@ -336,6 +343,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           'TEST END',
                           'OVERALL COMP TIME',
                           'OVERALL SUBMIT TIME',
+                          'TOTAL TIME (WITH EXEC)',
                           'OVERALL MARKS',
                           'TAB SWITCHES',
                           'PASTED'
@@ -362,6 +370,13 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
                             {formatDuration(s.overall_submission_time_seconds)}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
+                            {formatCompletionWithExec(
+                              s.overall_submission_time_seconds,
+                              s.total_execution_time_ms,
+                              s.total_compilation_time_ms
+                            )}
                           </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{
@@ -397,7 +412,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
                       <tr>
-                        {['STUDENT', 'QUESTION', 'SCORE', 'VERDICT', 'EXEC TIME', 'COMP TIME', 'SUBMITTED'].map(h => (
+                        {['STUDENT', 'QUESTION', 'SCORE', 'VERDICT', 'EXEC TIME', 'COMP TIME', 'TOTAL (EXEC+COMP)', 'SUBMITTED'].map(h => (
                           <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
                             {h}
                           </th>
@@ -438,6 +453,11 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
                             {formatDurationMs(submission.compilation_time_ms)}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
+                            {formatDurationMs(
+                              (submission.execution_time_ms || 0) + (submission.compilation_time_ms || 0)
+                            )}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
                             {new Date(submission.submitted_at).toLocaleString('en-IN')}
