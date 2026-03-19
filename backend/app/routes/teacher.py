@@ -496,6 +496,7 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 "student_name": user.get("name") or user.get("full_name") or "Unknown",
                 "student_email": user.get("email") or "Unknown",
                 "started_at": started_at,
+                "first_submitted_at": None,
                 "deadline_at": None,
                 "overall_score": 0,
                 "overall_submission_time_seconds": None,
@@ -540,6 +541,8 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
 
         submitted_at = sub.get("submitted_at")
         if submitted_at:
+            if (row["first_submitted_at"] is None) or (submitted_at < row["first_submitted_at"]):
+                row["first_submitted_at"] = submitted_at
             if (row["overall_submitted_at"] is None) or (submitted_at > row["overall_submitted_at"]):
                 row["overall_submitted_at"] = submitted_at
 
@@ -554,6 +557,7 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
             "student_name": user.get("name") or user.get("full_name") or "Unknown",
             "student_email": user.get("email") or "Unknown",
             "started_at": started_at,
+            "first_submitted_at": None,
             "deadline_at": None,
             "overall_score": 0,
             "overall_submission_time_seconds": None,
@@ -581,8 +585,9 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
                 q_score = float(q_sub.get("score", 0)) if q_sub else 0.0
                 earned_points += (q_score / 100.0) * q_points
             row["overall_score"] = round((earned_points / total_points) * 100.0, 2)
-        if row["started_at"] and row["overall_submitted_at"]:
-            started_dt = parse_iso_ts(row["started_at"])
+        if row["overall_submitted_at"]:
+            started_source = row["started_at"] or row.get("first_submitted_at")
+            started_dt = parse_iso_ts(started_source)
             submitted_dt = parse_iso_ts(row["overall_submitted_at"])
             if started_dt and submitted_dt:
                 row["overall_submission_time_seconds"] = max(0, int((submitted_dt - started_dt).total_seconds()))
