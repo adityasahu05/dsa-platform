@@ -130,9 +130,23 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
 
   const getFallbackSubmissionSeconds = (studentId) => {
     if (!studentId) return null;
-    const entry = submissionTimeByStudent[studentId];
-    if (!entry) return null;
-    return Math.max(0, Math.floor((entry.max - entry.min) / 1000));
+    const studentSubs = submissions.filter(s => s.student_id === studentId);
+    if (!studentSubs.length) return null;
+
+    const studentAnalytics = detailedAnalytics?.students?.find(s => s.student_id === studentId);
+    const startedAt = studentAnalytics?.started_at;
+    if (!startedAt) return null;
+
+    const latestSub = studentSubs.reduce((latest, s) =>
+      (s.submitted_at > (latest?.submitted_at || '')) ? s : latest, null
+    );
+    if (!latestSub?.submitted_at) return null;
+
+    const start = Date.parse(startedAt);
+    const end = Date.parse(latestSub.submitted_at);
+    if (isNaN(start) || isNaN(end)) return null;
+
+    return Math.max(0, Math.floor((end - start) / 1000));
   };
 
   const linkCode = test?.assessment_id || test?.id;
