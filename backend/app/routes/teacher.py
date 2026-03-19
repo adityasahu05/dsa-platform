@@ -912,7 +912,7 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
         "auto_submit": bool(data.auto_submit),
         "execution_time_ms": data.execution_time_ms,
         "compilation_time_ms": data.compilation_time_ms,
-        "submitted_at": datetime.utcnow().isoformat(),
+        "submitted_at": utcnow_iso(),
     }
     db.reference(f"/submissions/{sub_id}").set(submission)
     return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score} 
