@@ -219,7 +219,8 @@ async def execute_code(request: ExecuteRequest):
             pass
     if request.language.lower().strip() in compiled_langs and durations_ms:
         # Best-effort approximation: fastest submission latency (includes queue + exec)
-        compile_time_ms = round(min(durations_ms), 2)
+        # Return an integer to match client validation expectations
+        compile_time_ms = int(round(min(durations_ms)))
 
     for tc, (judge0_result, _finished_at) in zip(request.test_cases, judge0_results):
         try:
