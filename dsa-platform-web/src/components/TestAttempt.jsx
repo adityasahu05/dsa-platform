@@ -295,8 +295,8 @@ function TestAttempt({ test, onBack }) {
         ? safeResponse.compilation_time_ms
         : null;
     return {
-      executionTimeMs: results.length > 0 ? executionTimeMs : null,
-      compilationTimeMs,
+      executionTimeMs: results.length > 0 ? Math.round(executionTimeMs) : null,
+      compilationTimeMs: compilationTimeMs !== null ? Math.round(compilationTimeMs) : null,
     };
   };
 
