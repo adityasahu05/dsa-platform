@@ -1,1145 +1,923 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X, Trophy } from 'lucide-react';
-import { apiClient } from '../services/api';
 
-const API_URL = '/api/teacher';
 
-function TestDetailsPage({ test, onBack, onAddQuestion }) {
-  const [questions, setQuestions] = useState([]);
-  const [submissions, setSubmissions] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
-  const [detailedAnalytics, setDetailedAnalytics] = useState(null);
-  const [activeTab, setActiveTab] = useState('questions');
-  const [loading, setLoading] = useState(true);
-  const [linkStatus, setLinkStatus] = useState('');
-  const [selectedStudent, setSelectedStudent] = useState(null);
 
-  const [editingQuestion, setEditingQuestion] = useState(null);
-  const [deletingQuestion, setDeletingQuestion] = useState(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+"""
+Teacher Routes
+API endpoints for teacher operations — Firebase Realtime Database
+"""
 
-  useEffect(() => {
-    fetchTestData();
-    const id = setInterval(fetchTestData, 20000);
-    return () => clearInterval(id);
-  }, [test.id]);
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime, timezone, timedelta
+from firebase_admin import db
+from app.routes.auth import require_teacher, get_current_user
+import random
+import string
+import uuid
 
-  const fetchTestData = async () => {
-    try {
-      setLoading(true);
-      const questionsRes = await apiClient.get(`${API_URL}/test/${test.id}/questions`);
-      setQuestions(questionsRes.data);
+router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
-      const submissionsRes = await apiClient.get(`${API_URL}/submissions`);
-      const testSubmissions = submissionsRes.data.filter(sub =>
-        questionsRes.data.some(q => q.id === sub.question_id)
-      );
-      setSubmissions(testSubmissions);
+ALL_LANGUAGES = ["python", "c", "cpp", "java"]
 
-      try {
-        const analyticsRes = await apiClient.get(`${API_URL}/analytics/test/${test.id}`);
-        setAnalytics(analyticsRes.data);
-      } catch {
-        console.log('Analytics not available');
-      }
 
-      try {
-        const detailedRes = await apiClient.get(`${API_URL}/analytics/test/${test.id}/detailed`);
-        setDetailedAnalytics(detailedRes.data);
-      } catch {
-        console.log('Detailed analytics not available');
-      }
-    } catch (error) {
-      console.error('Error fetching test data:', error);
-    } finally {
-      setLoading(false);
+# ─── Pydantic Models ──────────────────────────────────────────────────────────
+
+class TestCreate(BaseModel):
+    title: str
+    description: str
+    duration_minutes: int = 60
+    is_active: bool = True
+    allowed_languages: List[str] = ["python", "c", "cpp", "java"]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    test_type: str = "invite_only"
+    tags: Optional[str] = ""
+    anti_paste_enabled: Optional[bool] = True
+    tab_switch_enabled: Optional[bool] = True
+    tab_switch_limit: Optional[int] = 3
+
+
+class TestUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    test_type: Optional[str] = None
+    tags: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    anti_paste_enabled: Optional[bool] = None
+    tab_switch_enabled: Optional[bool] = None
+    tab_switch_limit: Optional[int] = None
+
+
+class QuestionCreate(BaseModel):
+    test_id: str
+    title: str
+    description: str
+    difficulty: str
+    topic: str
+    points: int = 10
+    time_limit_ms: int = 2000
+
+
+class QuestionUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    difficulty: Optional[str] = None
+    topic: Optional[str] = None
+    points: Optional[int] = None
+    time_limit_ms: Optional[int] = None
+
+
+class TestCaseCreate(BaseModel):
+    question_id: str
+    input: str
+    expected_output: str
+    is_hidden: bool = False
+    points: int = 1
+
+
+class TestCaseUpdate(BaseModel):
+    input: Optional[str] = None
+    expected_output: Optional[str] = None
+    is_hidden: Optional[bool] = None
+    points: Optional[int] = None
+
+
+class SubmitRequest(BaseModel):
+    question_id: str
+    test_id: str
+    language: str
+    code: str
+    score: float
+    passed: int
+    total: int
+    auto_submit: Optional[bool] = False
+    execution_time_ms: Optional[int] = None
+    compilation_time_ms: Optional[int] = None
+
+
+class ForfeitRequest(BaseModel):
+    tab_switches: Optional[int] = None
+
+
+class TabSwitchLogRequest(BaseModel):
+    count: int
+    timestamp: Optional[str] = None
+
+
+class PasteLogRequest(BaseModel):
+    count: int
+    timestamp: Optional[str] = None
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def parse_languages(lang_str: str) -> List[str]:
+    return [l.strip() for l in (lang_str or "python").split(",") if l.strip()]
+
+def format_languages(langs: List[str]) -> str:
+    valid = [l.lower() for l in langs if l.lower() in ALL_LANGUAGES]
+    return ",".join(valid) if valid else "python"
+
+def generate_assessment_id() -> str:
+    return ''.join(random.choices(string.digits, k=7))
+
+def parse_date(date_str: Optional[str]):
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00')).isoformat()
+    except Exception:
+        return None
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+# AFTER
+def parse_iso_ts(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # If naive (no timezone), assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+def get_test_duration_seconds(test: dict) -> int:
+    try:
+        minutes = int(test.get("duration_minutes", 60))
+    except Exception:
+        minutes = 60
+    return max(1, minutes * 60)
+
+def get_or_create_attempt(test_id: str, student_id: str) -> dict:
+    attempt_ref = db.reference(f"/attempts/{test_id}/{student_id}")
+    attempt = attempt_ref.get() or {}
+    started_at = attempt.get("started_at")
+    if not started_at:
+        started_at = utcnow_iso()
+        attempt = {"started_at": started_at}
+        attempt_ref.set(attempt)
+    return attempt
+
+def is_attempt_expired(attempt: dict, duration_seconds: int) -> bool:
+    started = parse_iso_ts(attempt.get("started_at"))
+    if not started:
+        return False
+    now = datetime.now(timezone.utc)
+    return (now - started).total_seconds() > duration_seconds
+
+def is_attempt_forfeited(attempt: dict) -> bool:
+    return bool(attempt.get("forfeited"))
+
+def format_test(test_id: str, test: dict) -> dict:
+    return {
+        "id": test_id,
+        "title": test.get("title"),
+        "description": test.get("description"),
+        "teacher_id": test.get("teacher_id"),
+        "duration_minutes": test.get("duration_minutes", 60),
+        "is_active": test.get("is_active", True),
+        "allowed_languages": parse_languages(test.get("allowed_languages", "python")),
+        "start_date": test.get("start_date"),
+        "end_date": test.get("end_date"),
+        "test_type": test.get("test_type", "invite_only"),
+        "tags": [t.strip() for t in (test.get("tags") or "").split(",") if t.strip()],
+        "assessment_id": test.get("assessment_id", ""),
+        "created_at": test.get("created_at"),
+        "anti_paste_enabled": test.get("anti_paste_enabled", True),
+        "tab_switch_enabled": test.get("tab_switch_enabled", True),
+        "tab_switch_limit": test.get("tab_switch_limit", 3),
     }
-  };
 
-  const handleDelete = async () => {
-    if (!deletingQuestion) return;
-    setDeleteLoading(true);
-    try {
-      await apiClient.delete(`${API_URL}/questions/${deletingQuestion.id}`);
-      setQuestions(prev => prev.filter(q => q.id !== deletingQuestion.id));
-      setDeletingQuestion(null);
-    } catch (error) {
-      console.error('Error deleting question:', error);
-      alert('Failed to delete question. Please try again.');
-    } finally {
-      setDeleteLoading(false);
+
+# ─── Teacher Routes ───────────────────────────────────────────────────────────
+
+@router.get("/tests")
+def get_all_tests(current_user: dict = Depends(require_teacher)):
+    all_tests = db.reference("/tests").get() or {}
+    return [
+        format_test(tid, t)
+        for tid, t in all_tests.items()
+        if t.get("teacher_id") == current_user["id"]
+    ]
+
+
+@router.post("/tests")
+def create_test(test: TestCreate, current_user: dict = Depends(require_teacher)):
+    test_id = str(uuid.uuid4())
+    tab_switch_limit = int(test.tab_switch_limit or 3)
+    if tab_switch_limit < 1:
+        tab_switch_limit = 1
+    test_data = {
+        "title": test.title,
+        "description": test.description,
+        "teacher_id": current_user["id"],
+        "duration_minutes": test.duration_minutes,
+        "is_active": test.is_active,
+        "allowed_languages": format_languages(test.allowed_languages),
+        "start_date": parse_date(test.start_date),
+        "end_date": parse_date(test.end_date),
+        "test_type": test.test_type or "invite_only",
+        "tags": test.tags or "",
+        "assessment_id": generate_assessment_id(),
+        "created_at": datetime.utcnow().isoformat(),
+        "anti_paste_enabled": bool(test.anti_paste_enabled) if test.anti_paste_enabled is not None else True,
+        "tab_switch_enabled": bool(test.tab_switch_enabled) if test.tab_switch_enabled is not None else True,
+        "tab_switch_limit": tab_switch_limit,
     }
-  };
+    db.reference(f"/tests/{test_id}").set(test_data)
+    return format_test(test_id, test_data)
 
-  const getDifficultyColor = (difficulty) => {
-    const colors = { EASY: '#4caf50', MEDIUM: '#ff9800', HARD: '#f44336' };
-    return colors[difficulty] || '#999';
-  };
 
-  const formatDateTime = (iso) => {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return '—';
-    return d.toLocaleString('en-IN');
-  };
+@router.patch("/tests/{test_id}")
+def update_test(test_id: str, data: TestUpdate, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
+    updates = {}
+    if data.is_active is not None: updates["is_active"] = data.is_active
+    if data.start_date is not None: updates["start_date"] = parse_date(data.start_date)
+    if data.end_date is not None: updates["end_date"] = parse_date(data.end_date)
+    if data.test_type is not None: updates["test_type"] = data.test_type
+    if data.tags is not None: updates["tags"] = data.tags
+    if data.title is not None: updates["title"] = data.title
+    if data.description is not None: updates["description"] = data.description
+    if data.duration_minutes is not None: updates["duration_minutes"] = data.duration_minutes
+    if data.anti_paste_enabled is not None: updates["anti_paste_enabled"] = data.anti_paste_enabled
+    if data.tab_switch_enabled is not None: updates["tab_switch_enabled"] = data.tab_switch_enabled
+    if data.tab_switch_limit is not None:
+        limit = int(data.tab_switch_limit)
+        updates["tab_switch_limit"] = max(1, limit)
+    test_ref.update(updates)
+    updated = test_ref.get()
+    return format_test(test_id, updated)
 
-  const formatDuration = (seconds) => {
-    if (seconds === null || seconds === undefined) return '—';
-    const total = Math.max(0, Math.floor(seconds));
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return `${m}m ${s}s`;
-  };
 
-  const formatDurationMs = (ms) => {
-    if (ms === null || ms === undefined) return '—';
-    const total = Math.max(0, Math.floor(ms));
-    if (total < 1000) return `${total}ms`;
-    const s = Math.floor(total / 1000);
-    const rem = total % 1000;
-    return `${s}.${String(rem).padStart(3, '0')}s`;
-  };
+@router.delete("/tests/{test_id}")
+def delete_test(test_id: str, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
 
-  const formatCompletionWithExec = (baseSeconds, execMs, compMs) => {
-    if (baseSeconds === null || baseSeconds === undefined) return '—';
-    const execSec = execMs ? execMs / 1000 : 0;
-    const compSec = compMs ? compMs / 1000 : 0;
-    return formatDuration(baseSeconds + execSec + compSec);
-  };
+    # Delete related questions
+    all_questions = db.reference("/questions").get() or {}
+    qids = [qid for qid, q in all_questions.items() if q.get("test_id") == test_id]
+    for qid in qids:
+        db.reference(f"/questions/{qid}").delete()
 
-  const getFallbackSubmissionSeconds = (studentId) => {
-    if (!studentId) return null;
-    const studentSubs = submissions.filter(s => s.student_id === studentId);
-    if (!studentSubs.length) return null;
+    # Delete related test cases
+    all_tcs = db.reference("/test_cases").get() or {}
+    for tcid, tc in all_tcs.items():
+        if tc.get("question_id") in qids:
+            db.reference(f"/test_cases/{tcid}").delete()
 
-    const studentAnalytics = detailedAnalytics?.students?.find(s => s.student_id === studentId);
-    const startedAt = studentAnalytics?.started_at;
-    if (!startedAt) return null;
+    # Delete related submissions
+    all_subs = db.reference("/submissions").get() or {}
+    for sid, sub in all_subs.items():
+        if sub.get("test_id") == test_id:
+            db.reference(f"/submissions/{sid}").delete()
 
-    const latestSub = studentSubs.reduce((latest, s) =>
-      (s.submitted_at > (latest?.submitted_at || '')) ? s : latest, null
-    );
-    if (!latestSub?.submitted_at) return null;
+    test_ref.delete()
+    return {"message": "Test deleted"}
 
-    const start = Date.parse(startedAt);
-    const end = Date.parse(latestSub.submitted_at);
-    if (isNaN(start) || isNaN(end)) return null;
+@router.get("/test/{test_id}/questions")
+def get_test_questions(test_id: str):
+    all_questions = db.reference("/questions").get() or {}
+    result = []
+    for qid, q in all_questions.items():
+        if q.get("test_id") == test_id:
+            all_tcs = db.reference("/test_cases").get() or {}
+            test_cases = [
+                {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
+                 "is_hidden": tc.get("is_hidden", False), "points": tc.get("points", 1)}
+                for tcid, tc in all_tcs.items() if tc.get("question_id") == qid
+            ]
+            result.append({
+                "id": qid, "title": q.get("title"), "description": q.get("description"),
+                "difficulty": q.get("difficulty"), "topic": q.get("topic"),
+                "points": q.get("points", 10), "time_limit_ms": q.get("time_limit_ms", 2000),
+                "test_cases_count": len(test_cases), "test_cases": test_cases
+            })
+    return result
 
-    return Math.max(0, Math.floor((end - start) / 1000));
-  };
 
-  // Build leaderboard from detailedAnalytics
-  const leaderboard = (() => {
-    if (!detailedAnalytics || !Array.isArray(detailedAnalytics.students)) return [];
-    return [...detailedAnalytics.students]
-      .filter(s => s.overall_score !== undefined)
-      .sort((a, b) => {
-        // 1. Higher score wins
-        if (b.overall_score !== a.overall_score) return b.overall_score - a.overall_score;
-        // 2. Lower submission time wins
-        const aTime = a.overall_submission_time_seconds ?? Infinity;
-        const bTime = b.overall_submission_time_seconds ?? Infinity;
-        if (aTime !== bTime) return aTime - bTime;
-        // 3. Lower exec time wins
-        const aExec = a.total_execution_time_ms ?? Infinity;
-        const bExec = b.total_execution_time_ms ?? Infinity;
-        return aExec - bExec;
-      });
-  })();
-
-  const rankMedal = (rank) => {
-    if (rank === 1) return '🥇';
-    if (rank === 2) return '🥈';
-    if (rank === 3) return '🥉';
-    return `#${rank}`;
-  };
-
-  const linkCode = test?.assessment_id || test?.id;
-  const shareUrl = linkCode ? `${window.location.origin}/match/${linkCode}` : '';
-
-  const handleCopyLink = async () => {
-    if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setLinkStatus('Link copied');
-      setTimeout(() => setLinkStatus(''), 1500);
-    } catch {
-      setLinkStatus('Copy failed');
-      setTimeout(() => setLinkStatus(''), 1500);
+@router.post("/questions")
+def create_question(question: QuestionCreate):
+    qid = str(uuid.uuid4())
+    q_data = {
+        "test_id": question.test_id,
+        "title": question.title,
+        "description": question.description,
+        "difficulty": question.difficulty.upper(),
+        "topic": question.topic.upper(),
+        "points": question.points,
+        "time_limit_ms": question.time_limit_ms,
+        "created_at": datetime.utcnow().isoformat(),
     }
-  };
+    db.reference(f"/questions/{qid}").set(q_data)
+    q_data["id"] = qid
+    return q_data
 
-  const openStudentDetails = (student) => setSelectedStudent(student || null);
-  const closeStudentDetails = () => setSelectedStudent(null);
 
-  const TAB_LABELS = {
-    questions: `Questions (${questions.length})`,
-    submissions: `Submissions (${Array.isArray(detailedAnalytics?.students) ? detailedAnalytics.students.length : submissions.length})`,
-    analytics: 'Analytics',
-    leaderboard: `Leaderboard (${leaderboard.length})`,
-  };
+@router.put("/questions/{question_id}")
+def update_question(question_id: str, question_data: QuestionUpdate):
+    q_ref = db.reference(f"/questions/{question_id}")
+    q = q_ref.get()
+    if not q:
+        raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
+    updates = {}
+    if question_data.title is not None: updates["title"] = question_data.title
+    if question_data.description is not None: updates["description"] = question_data.description
+    if question_data.difficulty is not None: updates["difficulty"] = question_data.difficulty.upper()
+    if question_data.topic is not None: updates["topic"] = question_data.topic.upper()
+    if question_data.points is not None: updates["points"] = question_data.points
+    if question_data.time_limit_ms is not None: updates["time_limit_ms"] = question_data.time_limit_ms
+    q_ref.update(updates)
+    updated = q_ref.get()
+    all_tcs = db.reference("/test_cases").get() or {}
+    test_cases = [
+        {"id": tcid, "input": tc.get("input"), "expected_output": tc.get("expected_output"),
+         "is_hidden": tc.get("is_hidden", False), "points": tc.get("points", 1)}
+        for tcid, tc in all_tcs.items() if tc.get("question_id") == question_id
+    ]
+    updated["id"] = question_id
+    updated["test_cases"] = test_cases
+    return updated
 
-  return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
-      {/* Header */}
-      <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0', padding: '20px 40px' }}>
-        <button
-          onClick={onBack}
-          style={{
-            background: 'none', border: 'none', color: '#2196F3', cursor: 'pointer',
-            fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px',
-            marginBottom: '12px', padding: 0
-          }}
-        >
-          <ArrowLeft size={16} /> Back to tests
-        </button>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1 style={{ fontSize: '24px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
-              {test.title}
-            </h1>
-            <p style={{ fontSize: '14px', color: '#666' }}>{test.description || 'No description'}</p>
-            <div style={{ display: 'flex', gap: '20px', marginTop: '12px', fontSize: '13px', color: '#999' }}>
-              <span><Clock size={14} style={{ verticalAlign: 'middle' }} /> {test.duration_minutes} mins</span>
-              <span><Users size={14} style={{ verticalAlign: 'middle' }} /> {submissions.length} submissions</span>
-              <span>{questions.length} questions</span>
-            </div>
-          </div>
+@router.delete("/questions/{question_id}")
+def delete_question(question_id: str):
+    if not db.reference(f"/questions/{question_id}").get():
+        raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
+    db.reference(f"/questions/{question_id}").delete()
+    # Delete related test cases and submissions
+    all_tcs = db.reference("/test_cases").get() or {}
+    for tcid, tc in all_tcs.items():
+        if tc.get("question_id") == question_id:
+            db.reference(f"/test_cases/{tcid}").delete()
+    all_subs = db.reference("/submissions").get() or {}
+    for sid, s in all_subs.items():
+        if s.get("question_id") == question_id:
+            db.reference(f"/submissions/{sid}").delete()
+    return {"message": f"Question {question_id} deleted successfully"}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {shareUrl && (
-              <button
-                onClick={handleCopyLink}
-                style={{
-                  padding: '10px 16px', backgroundColor: '#111827', color: 'white',
-                  border: 'none', borderRadius: '4px', cursor: 'pointer',
-                  fontSize: '13px', fontWeight: 600
-                }}
-              >
-                Copy Test Link
-              </button>
-            )}
-            {linkStatus && <span style={{ fontSize: '12px', color: '#16a34a' }}>{linkStatus}</span>}
-            <button
-              onClick={() => onAddQuestion(test)}
-              style={{
-                padding: '10px 20px', backgroundColor: '#2196F3', color: 'white',
-                border: 'none', borderRadius: '4px', cursor: 'pointer',
-                fontSize: '14px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px'
-              }}
-            >
-              <Plus size={18} /> Add Question
-            </button>
-          </div>
-        </div>
-      </div>
 
-      {/* Tabs */}
-      <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0', padding: '0 40px' }}>
-        <div style={{ display: 'flex', gap: '32px' }}>
-          {['questions', 'submissions', 'analytics', 'leaderboard'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={{
-                background: 'none', border: 'none',
-                borderBottom: activeTab === tab ? '2px solid #2196F3' : '2px solid transparent',
-                color: activeTab === tab ? '#2196F3' : '#666',
-                cursor: 'pointer', fontSize: '14px', fontWeight: 500, padding: '12px 0',
-                display: 'flex', alignItems: 'center', gap: '6px'
-              }}
-            >
-              {tab === 'leaderboard' && <Trophy size={14} />}
-              {TAB_LABELS[tab]}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Content */}
-      <div style={{ padding: '24px 40px' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '60px' }}>
-            <div style={{
-              width: '40px', height: '40px', border: '4px solid #f3f3f3',
-              borderTop: '4px solid #2196F3', borderRadius: '50%',
-              animation: 'spin 1s linear infinite', margin: '0 auto'
-            }} />
-          </div>
-        ) : (
-          <>
-            {/* Questions Tab */}
-            {activeTab === 'questions' && (
-              <div>
-                {questions.length === 0 ? (
-                  <div style={{
-                    backgroundColor: '#fff', border: '1px solid #e0e0e0',
-                    borderRadius: '4px', padding: '60px', textAlign: 'center'
-                  }}>
-                    <p style={{ color: '#999', marginBottom: '16px' }}>No questions added yet</p>
-                    <button
-                      onClick={() => onAddQuestion(test)}
-                      style={{
-                        padding: '10px 20px', backgroundColor: '#2196F3', color: 'white',
-                        border: 'none', borderRadius: '4px', cursor: 'pointer',
-                        fontSize: '14px', fontWeight: 500
-                      }}
-                    >
-                      <Plus size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                      Add First Question
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {questions.map((question, index) => (
-                      <div
-                        key={question.id}
-                        style={{
-                          backgroundColor: '#fff', border: '1px solid #e0e0e0',
-                          borderRadius: '4px', padding: '20px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                              <span style={{
-                                backgroundColor: '#f0f0f0', color: '#666',
-                                padding: '4px 12px', borderRadius: '12px',
-                                fontSize: '12px', fontWeight: 600
-                              }}>Q{index + 1}</span>
-                              <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#333', margin: 0 }}>
-                                {question.title}
-                              </h3>
-                              <span style={{
-                                backgroundColor: getDifficultyColor(question.difficulty) + '20',
-                                color: getDifficultyColor(question.difficulty),
-                                padding: '3px 10px', borderRadius: '12px',
-                                fontSize: '12px', fontWeight: 600
-                              }}>{question.difficulty}</span>
-                              <span style={{
-                                backgroundColor: '#E3F2FD', color: '#1976D2',
-                                padding: '3px 10px', borderRadius: '12px',
-                                fontSize: '12px', fontWeight: 500
-                              }}>{question.topic.replace(/_/g, ' ')}</span>
-                            </div>
-
-                            <p style={{ fontSize: '14px', color: '#666', marginBottom: '12px', lineHeight: '1.5' }}>
-                              {question.description.length > 150
-                                ? question.description.substring(0, 150) + '...'
-                                : question.description}
-                            </p>
-
-                            <div style={{ display: 'flex', gap: '20px', fontSize: '13px', color: '#999' }}>
-                              <span>{question.points} points</span>
-                              <span>{question.time_limit_ms}ms time limit</span>
-                              <span>{question.test_cases?.length || 0} test cases</span>
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: '8px', marginLeft: '16px' }}>
-                            <button
-                              onClick={() => setEditingQuestion(question)}
-                              style={{
-                                padding: '6px 12px', backgroundColor: 'transparent',
-                                color: '#2196F3', border: '1px solid #2196F3',
-                                borderRadius: '4px', cursor: 'pointer', fontSize: '13px',
-                                display: 'flex', alignItems: 'center', gap: '4px'
-                              }}
-                            >
-                              <Edit2 size={14} /> Edit
-                            </button>
-                            <button
-                              onClick={() => setDeletingQuestion(question)}
-                              style={{
-                                padding: '6px 12px', backgroundColor: 'transparent',
-                                color: '#f44336', border: '1px solid #f44336',
-                                borderRadius: '4px', cursor: 'pointer', fontSize: '13px',
-                                display: 'flex', alignItems: 'center', gap: '4px'
-                              }}
-                            >
-                              <Trash2 size={14} /> Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Submissions Tab */}
-            {activeTab === 'submissions' && (
-              <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                {detailedAnalytics && Array.isArray(detailedAnalytics.students) ? (
-                  detailedAnalytics.students.length > 0 ? (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                        <tr>
-                          {['NAME', 'EMAIL ID', 'TEST START', 'TEST END', 'SUBMISSION TIME', 'OVERALL MARKS', 'TAB SWITCHES', 'PASTED'].map(h => (
-                            <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailedAnalytics.students.map((s) => (
-                          <tr key={s.student_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '12px 16px', fontSize: '14px' }}>
-                              <button
-                                onClick={() => openStudentDetails(s)}
-                                style={{
-                                  background: 'none', border: 'none', padding: 0, margin: 0,
-                                  color: '#2196F3', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                                }}
-                              >
-                                {s.student_name || 'Unknown'}
-                              </button>
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_email || 'Unknown'}</td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.started_at)}</td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.overall_submitted_at || s.deadline_at)}</td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDuration(s.overall_submission_time_seconds)}</td>
-                            <td style={{ padding: '12px 16px' }}>
-                              <span style={{
-                                padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                                backgroundColor: s.overall_score >= 90 ? '#E8F5E9' : s.overall_score >= 50 ? '#FFF3E0' : '#FFEBEE',
-                                color: s.overall_score >= 90 ? '#4CAF50' : s.overall_score >= 50 ? '#FF9800' : '#F44336'
-                              }}>
-                                {s.overall_score ?? 0}%
-                              </span>
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{s.tab_switches ?? 0}</td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                              {(s.paste_count ?? 0) > 0 ? `Yes (${s.paste_count})` : 'No'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div style={{ padding: '60px', textAlign: 'center' }}>
-                      <Users size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
-                      <p style={{ color: '#999' }}>No submissions yet</p>
-                    </div>
-                  )
-                ) : submissions.length === 0 ? (
-                  <div style={{ padding: '60px', textAlign: 'center' }}>
-                    <Users size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
-                    <p style={{ color: '#999' }}>No submissions yet</p>
-                  </div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                      <tr>
-                        {['STUDENT', 'QUESTION', 'SCORE', 'EXEC TIME', 'COMP TIME', 'SUBMISSION TIME', 'SUBMITTED'].map(h => (
-                          <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submissions.map((submission) => {
-                        const studentOverall = detailedAnalytics?.students?.find(s => s.student_id === submission.student_id);
-                        const overallSeconds = studentOverall?.overall_submission_time_seconds ?? getFallbackSubmissionSeconds(submission.student_id);
-                        return (
-                          <tr key={submission.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '12px 16px', fontSize: '14px' }}>
-                              <div style={{ fontWeight: 600, color: '#333' }}>
-                                {submission.student_name || `Student #${submission.student_id}`}
-                              </div>
-                              {submission.student_email && (
-                                <div style={{ fontSize: '12px', color: '#999', marginTop: '2px' }}>{submission.student_email}</div>
-                              )}
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '14px' }}>
-                              {submission.question_title || `Q#${submission.question_id}`}
-                            </td>
-                            <td style={{ padding: '12px 16px' }}>
-                              <span style={{
-                                padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                                backgroundColor: submission.score === 100 ? '#E8F5E9' : submission.score >= 50 ? '#FFF3E0' : '#FFEBEE',
-                                color: submission.score === 100 ? '#4CAF50' : submission.score >= 50 ? '#FF9800' : '#F44336'
-                              }}>{submission.score}%</span>
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                              {formatDurationMs(submission.execution_time_ms)}
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                              {formatDurationMs(submission.compilation_time_ms)}
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                              {formatDuration(overallSeconds)}
-                            </td>
-                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
-                              {new Date(submission.submitted_at).toLocaleString('en-IN')}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-
-            {/* Analytics Tab */}
-            {activeTab === 'analytics' && (
-              <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  {[
-                    { label: 'Total Questions', value: questions.length, color: '#2196F3' },
-                    { label: 'Total Submissions', value: submissions.length, color: '#4CAF50' },
-                    { label: 'Average Score', value: submissions.length > 0 ? Math.round(submissions.reduce((s, x) => s + x.score, 0) / submissions.length) + '%' : '0%', color: '#FF9800' },
-                    { label: 'Pass Rate', value: submissions.length > 0 ? Math.round((submissions.filter(s => s.verdict === 'PASS').length / submissions.length) * 100) + '%' : '0%', color: '#9C27B0' }
-                  ].map(card => (
-                    <div key={card.label} style={{
-                      backgroundColor: '#fff', border: '1px solid #e0e0e0',
-                      borderRadius: '4px', padding: '20px', borderLeft: `4px solid ${card.color}`
-                    }}>
-                      <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>{card.label}</div>
-                      <div style={{ fontSize: '28px', fontWeight: 600, color: '#333' }}>{card.value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '20px', marginBottom: '24px' }}>
-                  <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Detailed Student Analytics</h3>
-                  {!detailedAnalytics || !Array.isArray(detailedAnalytics.students) ? (
-                    <div style={{ color: '#999', fontSize: '14px' }}>Detailed analytics not available.</div>
-                  ) : detailedAnalytics.students.length === 0 ? (
-                    <div style={{ color: '#999', fontSize: '14px' }}>No student attempts yet.</div>
-                  ) : (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
-                        <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                          <tr>
-                            {['STUDENT', 'EMAIL', 'TEST START', 'OVERALL SUBMITTED', 'OVERALL TIME', 'OVERALL SCORE'].map(h => (
-                              <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>{h}</th>
-                            ))}
-                            {(detailedAnalytics.questions || questions).map((q, i) => (
-                              <th key={q.id || i} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
-                                Q{i + 1} END
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {detailedAnalytics.students.map((s) => {
-                            const qList = detailedAnalytics.questions || questions;
-                            return (
-                              <tr key={s.student_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                                <td style={{ padding: '12px 16px', fontSize: '14px', fontWeight: 600 }}>{s.student_name}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '14px' }}>{s.student_email}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.started_at)}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDateTime(s.overall_submitted_at)}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>{formatDuration(s.overall_submission_time_seconds)}</td>
-                                <td style={{ padding: '12px 16px' }}>
-                                  <span style={{
-                                    padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                                    backgroundColor: s.overall_score >= 70 ? '#E8F5E9' : s.overall_score >= 40 ? '#FFF3E0' : '#FFEBEE',
-                                    color: s.overall_score >= 70 ? '#4CAF50' : s.overall_score >= 40 ? '#FF9800' : '#F44336'
-                                  }}>{s.overall_score}%</span>
-                                </td>
-                                {qList.map((q, i) => {
-                                  const qEntry = s.questions?.[q.id];
-                                  return (
-                                    <td key={q.id || i} style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>
-                                      {qEntry?.submitted_at ? `${formatDateTime(qEntry.submitted_at)}${qEntry.score !== undefined ? ` (${qEntry.score}%)` : ''}` : '—'}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', padding: '20px' }}>
-                  <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Question-wise Performance</h3>
-                  {(detailedAnalytics?.questions || questions).map((question, index) => {
-                    const questionSubs = submissions.filter(s => s.question_id === question.id);
-                    const avgScore = question.average_score !== undefined
-                      ? Math.round(question.average_score)
-                      : questionSubs.length > 0
-                        ? Math.round(questionSubs.reduce((sum, s) => sum + s.score, 0) / questionSubs.length)
-                        : 0;
-                    const avgExecMs = question.avg_execution_time_ms ?? null;
-                    const avgCompMs = question.avg_compilation_time_ms ?? null;
-                    return (
-                      <div key={question.id} style={{
-                        display: 'flex', alignItems: 'center', padding: '12px 0',
-                        borderBottom: index < questions.length - 1 ? '1px solid #f0f0f0' : 'none'
-                      }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
-                            Q{index + 1}: {question.title}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#999' }}>
-                            {questionSubs.length} submissions · Avg: {avgScore}% · Exec: {formatDurationMs(avgExecMs)} · Comp: {formatDurationMs(avgCompMs)}
-                          </div>
-                        </div>
-                        <div style={{ width: '200px' }}>
-                          <div style={{ height: '8px', backgroundColor: '#f0f0f0', borderRadius: '4px', overflow: 'hidden' }}>
-                            <div style={{
-                              height: '100%', width: `${avgScore}%`,
-                              backgroundColor: avgScore >= 70 ? '#4CAF50' : avgScore >= 40 ? '#FF9800' : '#F44336',
-                              transition: 'width 0.3s'
-                            }} />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Leaderboard Tab */}
-            {activeTab === 'leaderboard' && (
-              <div>
-                {/* Ranking criteria info */}
-                <div style={{
-                  backgroundColor: '#E3F2FD', border: '1px solid #BBDEFB',
-                  borderRadius: '6px', padding: '12px 16px', marginBottom: '20px',
-                  fontSize: '13px', color: '#1565C0', display: 'flex', alignItems: 'center', gap: '8px'
-                }}>
-                  <Trophy size={16} />
-                  Ranked by: <strong>Score</strong> (highest) → <strong>Submission Time</strong> (fastest) → <strong>Exec Time</strong> (lowest)
-                </div>
-
-                {leaderboard.length === 0 ? (
-                  <div style={{
-                    backgroundColor: '#fff', border: '1px solid #e0e0e0',
-                    borderRadius: '4px', padding: '60px', textAlign: 'center'
-                  }}>
-                    <Trophy size={48} style={{ color: '#ccc', marginBottom: '16px' }} />
-                    <p style={{ color: '#999' }}>No submissions yet. Leaderboard will appear once students submit.</p>
-                  </div>
-                ) : (
-                  <div style={{ backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                    {/* Top 3 podium */}
-                    {leaderboard.length >= 1 && (
-                      <div style={{
-                        display: 'flex', justifyContent: 'center', alignItems: 'flex-end',
-                        gap: '12px', padding: '32px 40px 24px',
-                        background: 'linear-gradient(135deg, #f8f9ff 0%, #fff8e1 100%)',
-                        borderBottom: '1px solid #e0e0e0'
-                      }}>
-                        {/* 2nd place */}
-                        {leaderboard[1] && (
-                          <div style={{ textAlign: 'center', flex: 1, maxWidth: '180px' }}>
-                            <div style={{ fontSize: '32px', marginBottom: '4px' }}>🥈</div>
-                            <div style={{
-                              backgroundColor: '#C0C0C0', color: '#fff',
-                              borderRadius: '8px 8px 0 0', padding: '16px 12px 12px',
-                              height: '90px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end'
-                            }}>
-                              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '2px' }}>
-                                {leaderboard[1].student_name}
-                              </div>
-                              <div style={{ fontSize: '18px', fontWeight: 800 }}>{leaderboard[1].overall_score}%</div>
-                            </div>
-                            <div style={{ backgroundColor: '#e8e8e8', padding: '6px', borderRadius: '0 0 6px 6px', fontSize: '11px', color: '#666' }}>
-                              {formatDuration(leaderboard[1].overall_submission_time_seconds)}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 1st place */}
-                        <div style={{ textAlign: 'center', flex: 1, maxWidth: '200px' }}>
-                          <div style={{ fontSize: '40px', marginBottom: '4px' }}>🥇</div>
-                          <div style={{
-                            backgroundColor: '#FFD700', color: '#333',
-                            borderRadius: '8px 8px 0 0', padding: '16px 12px 12px',
-                            height: '120px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end'
-                          }}>
-                            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '2px' }}>
-                              {leaderboard[0].student_name}
-                            </div>
-                            <div style={{ fontSize: '22px', fontWeight: 800 }}>{leaderboard[0].overall_score}%</div>
-                          </div>
-                          <div style={{ backgroundColor: '#fff3b0', padding: '6px', borderRadius: '0 0 6px 6px', fontSize: '11px', color: '#666' }}>
-                            {formatDuration(leaderboard[0].overall_submission_time_seconds)}
-                          </div>
-                        </div>
-
-                        {/* 3rd place */}
-                        {leaderboard[2] && (
-                          <div style={{ textAlign: 'center', flex: 1, maxWidth: '180px' }}>
-                            <div style={{ fontSize: '32px', marginBottom: '4px' }}>🥉</div>
-                            <div style={{
-                              backgroundColor: '#CD7F32', color: '#fff',
-                              borderRadius: '8px 8px 0 0', padding: '16px 12px 12px',
-                              height: '70px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end'
-                            }}>
-                              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '2px' }}>
-                                {leaderboard[2].student_name}
-                              </div>
-                              <div style={{ fontSize: '18px', fontWeight: 800 }}>{leaderboard[2].overall_score}%</div>
-                            </div>
-                            <div style={{ backgroundColor: '#f0dcc8', padding: '6px', borderRadius: '0 0 6px 6px', fontSize: '11px', color: '#666' }}>
-                              {formatDuration(leaderboard[2].overall_submission_time_seconds)}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Full rankings table */}
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                        <tr>
-                          {['RANK', 'STUDENT', 'EMAIL', 'SCORE', 'SUBMISSION TIME', 'EXEC TIME', 'COMP TIME', 'TAB SWITCHES'].map(h => (
-                            <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {leaderboard.map((s, index) => {
-                          const rank = index + 1;
-                          const isTopThree = rank <= 3;
-                          return (
-                            <tr
-                              key={s.student_id}
-                              style={{
-                                borderBottom: '1px solid #f0f0f0',
-                                backgroundColor: rank === 1 ? '#FFFDE7' : rank === 2 ? '#FAFAFA' : rank === 3 ? '#FFF8F0' : '#fff',
-                              }}
-                            >
-                              <td style={{ padding: '12px 16px', fontSize: '16px', fontWeight: 700, minWidth: '60px' }}>
-                                {rankMedal(rank)}
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '14px' }}>
-                                <button
-                                  onClick={() => openStudentDetails(s)}
-                                  style={{
-                                    background: 'none', border: 'none', padding: 0,
-                                    color: '#2196F3', cursor: 'pointer', fontSize: '14px',
-                                    fontWeight: isTopThree ? 700 : 600,
-                                  }}
-                                >
-                                  {s.student_name || 'Unknown'}
-                                </button>
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                                {s.student_email || '—'}
-                              </td>
-                              <td style={{ padding: '12px 16px' }}>
-                                <span style={{
-                                  padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                                  backgroundColor: s.overall_score >= 90 ? '#E8F5E9' : s.overall_score >= 50 ? '#FFF3E0' : '#FFEBEE',
-                                  color: s.overall_score >= 90 ? '#4CAF50' : s.overall_score >= 50 ? '#FF9800' : '#F44336'
-                                }}>
-                                  {s.overall_score ?? 0}%
-                                </span>
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                                {formatDuration(s.overall_submission_time_seconds)}
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                                {formatDurationMs(s.total_execution_time_ms)}
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '13px', color: '#666' }}>
-                                {formatDurationMs(s.total_compilation_time_ms)}
-                              </td>
-                              <td style={{ padding: '12px 16px', fontSize: '13px', color: s.tab_switches > 0 ? '#f44336' : '#666' }}>
-                                {s.tab_switches ?? 0}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* EDIT QUESTION MODAL */}
-      {editingQuestion && (
-        <EditQuestionModal
-          question={editingQuestion}
-          onClose={() => setEditingQuestion(null)}
-          onSuccess={(updatedQuestion) => {
-            setQuestions(prev => prev.map(q => q.id === updatedQuestion.id ? updatedQuestion : q));
-            setEditingQuestion(null);
-          }}
-        />
-      )}
-
-      {/* DELETE CONFIRMATION DIALOG */}
-      {deletingQuestion && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: '#fff', borderRadius: '8px', padding: '28px',
-            width: '100%', maxWidth: '420px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-              <div style={{
-                width: '40px', height: '40px', borderRadius: '50%',
-                backgroundColor: '#FFEBEE', display: 'flex', alignItems: 'center', justifyContent: 'center'
-              }}>
-                <Trash2 size={20} color="#F44336" />
-              </div>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#333', margin: 0 }}>Delete Question?</h3>
-            </div>
-            <p style={{ fontSize: '14px', color: '#666', marginBottom: '8px', lineHeight: '1.5' }}>
-              Are you sure you want to delete:
-            </p>
-            <div style={{
-              backgroundColor: '#f9f9f9', border: '1px solid #e0e0e0',
-              borderRadius: '4px', padding: '12px', marginBottom: '20px'
-            }}>
-              <strong style={{ fontSize: '14px', color: '#333' }}>{deletingQuestion.title}</strong>
-              <p style={{ fontSize: '12px', color: '#999', margin: '4px 0 0' }}>
-                This will also delete all test cases and submissions for this question. This action cannot be undone.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={() => setDeletingQuestion(null)}
-                disabled={deleteLoading}
-                style={{
-                  flex: 1, padding: '10px', border: '1px solid #ddd',
-                  borderRadius: '4px', cursor: 'pointer', fontSize: '14px',
-                  fontWeight: 500, backgroundColor: 'white', color: '#333'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleteLoading}
-                style={{
-                  flex: 1, padding: '10px', backgroundColor: deleteLoading ? '#ef9a9a' : '#F44336',
-                  color: 'white', border: 'none', borderRadius: '4px',
-                  cursor: deleteLoading ? 'not-allowed' : 'pointer',
-                  fontSize: '14px', fontWeight: 500
-                }}
-              >
-                {deleteLoading ? 'Deleting...' : 'Yes, Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Student Details Modal */}
-      {selectedStudent && detailedAnalytics && Array.isArray(detailedAnalytics.questions) && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '16px'
-        }}
-          onClick={closeStudentDetails}
-        >
-          <div style={{
-            backgroundColor: '#fff', borderRadius: '8px', padding: '24px',
-            width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto',
-            boxShadow: '0 6px 24px rgba(0,0,0,0.18)'
-          }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#333' }}>
-                  {selectedStudent.student_name || 'Student'}
-                </div>
-                <div style={{ fontSize: '13px', color: '#666' }}>{selectedStudent.student_email || '—'}</div>
-              </div>
-              <button
-                onClick={closeStudentDetails}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: '4px' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-              {[
-                { label: 'Test Start', value: formatDateTime(selectedStudent.started_at) },
-                { label: 'Last Submit', value: formatDateTime(selectedStudent.overall_submitted_at || selectedStudent.deadline_at) },
-                { label: 'Time to Submit', value: formatDuration(selectedStudent.overall_submission_time_seconds) },
-                { label: 'Total w/ Exec', value: formatCompletionWithExec(selectedStudent.overall_submission_time_seconds, selectedStudent.total_execution_time_ms, selectedStudent.total_compilation_time_ms) },
-              ].map(card => (
-                <div key={card.label} style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '10px' }}>
-                  <div style={{ fontSize: '11px', color: '#999' }}>{card.label}</div>
-                  <div style={{ fontSize: '13px', color: '#333', fontWeight: 600 }}>{card.value}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '820px' }}>
-                <thead style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                  <tr>
-                    {['QUESTION', 'SCORE', 'LANG', 'SUBMITTED', 'EXEC TIME', 'COMP TIME', 'AUTO'].map(h => (
-                      <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#666' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {detailedAnalytics.questions.map((q) => {
-                    const qEntry = selectedStudent.questions?.[q.id] || null;
-                    return (
-                      <tr key={q.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{ padding: '10px 12px', fontSize: '13px', color: '#333' }}>{q.title || q.id}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '13px', color: '#333' }}>{qEntry?.score ?? '—'}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>{qEntry?.language ? String(qEntry.language).toUpperCase() : '—'}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>{formatDateTime(qEntry?.submitted_at)}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>{formatDurationMs(qEntry?.execution_time_ms)}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>{formatDurationMs(qEntry?.compilation_time_ms)}</td>
-                        <td style={{ padding: '10px 12px', fontSize: '12px', color: '#666' }}>{qEntry?.auto_submit ? 'Yes' : 'No'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// EDIT QUESTION MODAL COMPONENT
-function EditQuestionModal({ question, onClose, onSuccess }) {
-  const [formData, setFormData] = useState({
-    title: question.title,
-    description: question.description,
-    difficulty: question.difficulty,
-    topic: question.topic,
-    points: question.points,
-    time_limit_ms: question.time_limit_ms
-  });
-  const [isCustomTopic, setIsCustomTopic] = useState(false);
-  const [customTopic, setCustomTopic] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [testCases, setTestCases] = useState(
-    (question.test_cases || []).map(tc => ({ ...tc, _status: 'existing' }))
-  );
-
-  const PRESET_TOPICS = [
-    'ARRAYS', 'STRINGS', 'LINKED_LISTS', 'TREES', 'GRAPHS',
-    'SORTING', 'SEARCHING', 'DYNAMIC_PROGRAMMING', 'RECURSION',
-    'BACKTRACKING', 'STACK_QUEUE', 'HEAP'
-  ];
-
-  useEffect(() => {
-    const topicUpper = question.topic.toUpperCase();
-    if (!PRESET_TOPICS.includes(topicUpper)) {
-      setIsCustomTopic(true);
-      setCustomTopic(question.topic.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()));
-    } else {
-      setFormData(prev => ({ ...prev, topic: topicUpper }));
+@router.post("/test-cases")
+def create_test_case(test_case: TestCaseCreate):
+    tcid = str(uuid.uuid4())
+    tc_data = {
+        "question_id": test_case.question_id,
+        "input": test_case.input,
+        "expected_output": test_case.expected_output,
+        "is_hidden": test_case.is_hidden,
+        "points": test_case.points,
     }
-  }, []);
+    db.reference(f"/test_cases/{tcid}").set(tc_data)
+    tc_data["id"] = tcid
+    return tc_data
 
-  const handleTopicChange = (e) => {
-    const value = e.target.value;
-    if (value === 'CUSTOM') {
-      setIsCustomTopic(true);
-      setFormData({ ...formData, topic: '' });
-    } else {
-      setIsCustomTopic(false);
-      setCustomTopic('');
-      setFormData({ ...formData, topic: value });
+
+@router.put("/test-cases/{test_case_id}")
+def update_test_case(test_case_id: str, data: TestCaseUpdate):
+    tc_ref = db.reference(f"/test_cases/{test_case_id}")
+    tc = tc_ref.get()
+    if not tc:
+        raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
+    updates = {}
+    if data.input is not None: updates["input"] = data.input
+    if data.expected_output is not None: updates["expected_output"] = data.expected_output
+    if data.is_hidden is not None: updates["is_hidden"] = data.is_hidden
+    if data.points is not None: updates["points"] = data.points
+    tc_ref.update(updates)
+    updated = tc_ref.get()
+    updated["id"] = test_case_id
+    return updated
+
+
+@router.delete("/test-cases/{test_case_id}")
+def delete_test_case(test_case_id: str):
+    if not db.reference(f"/test_cases/{test_case_id}").get():
+        raise HTTPException(status_code=404, detail=f"Test case {test_case_id} not found")
+    db.reference(f"/test_cases/{test_case_id}").delete()
+    return {"message": f"Test case {test_case_id} deleted successfully"}
+
+
+@router.get("/submissions")
+def get_all_submissions(limit: int = 50):
+    all_subs = db.reference("/submissions").get() or {}
+    all_users = db.reference("/users").get() or {}
+    all_questions = db.reference("/questions").get() or {}
+    subs = sorted(all_subs.values(), key=lambda x: x.get("submitted_at", ""), reverse=True)
+    enriched = []
+    for sub in subs[:limit]:
+        student_id = sub.get("student_id")
+        question_id = sub.get("question_id")
+        user = all_users.get(student_id, {}) if student_id else {}
+        question = all_questions.get(question_id, {}) if question_id else {}
+        enriched.append({
+            **sub,
+            "student_name": user.get("name") or user.get("full_name") or "Unknown",
+            "student_email": user.get("email") or "Unknown",
+            "question_title": question.get("title") or "Unknown",
+        })
+    return enriched
+
+
+@router.get("/analytics/test/{test_id}")
+def get_test_analytics(test_id: str):
+    all_questions = db.reference("/questions").get() or {}
+    questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
+    all_subs = db.reference("/submissions").get() or {}
+    analytics = {"test_id": test_id, "total_questions": len(questions), "questions": []}
+    for qid, q in questions.items():
+        subs = [s for s in all_subs.values() if s.get("question_id") == qid]
+        total = len(subs)
+        passed = sum(1 for s in subs if s.get("score") == 100)
+        avg = sum(s.get("score", 0) for s in subs) / total if total > 0 else 0
+        analytics["questions"].append({
+            "question_id": qid, "title": q.get("title"),
+            "total_submissions": total, "passed": passed, "failed": total - passed,
+            "pass_rate": (passed / total * 100) if total > 0 else 0,
+            "average_score": round(avg, 2)
+        })
+    return analytics
+
+
+@router.get("/analytics/test/{test_id}/detailed")
+def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(require_teacher)):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    all_questions = db.reference("/questions").get() or {}
+    questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
+    question_list = [
+        {"id": qid, "title": q.get("title"), "points": q.get("points", 10)}
+        for qid, q in questions.items()
+    ]
+
+    all_subs = db.reference("/submissions").get() or {}
+    all_users = db.reference("/users").get() or {}
+    attempts = db.reference(f"/attempts/{test_id}").get() or {}
+
+    duration_seconds = get_test_duration_seconds(test)
+
+    # Aggregate per-question stats
+    q_stats = {
+        qid: {
+            "count": 0,
+            "score_sum": 0.0,
+            "exec_sum": 0,
+            "exec_count": 0,
+            "comp_sum": 0,
+            "comp_count": 0,
+        }
+        for qid in questions.keys()
     }
-  };
 
-  const updateTestCase = (index, field, value) => {
-    setTestCases(prev => prev.map((tc, i) => i === index ? { ...tc, [field]: value } : tc));
-  };
+    # Build per-student aggregation
+    student_rows = {}
+    for sub in all_subs.values():
+        if sub.get("test_id") != test_id:
+            continue
+        student_id = sub.get("student_id")
+        if not student_id:
+            continue
+        if student_id not in student_rows:
+            user = all_users.get(student_id, {})
+            attempt = attempts.get(student_id, {})
+            started_at = attempt.get("started_at")
+            student_rows[student_id] = {
+                "student_id": student_id,
+                "student_name": user.get("name") or user.get("full_name") or "Unknown",
+                "student_email": user.get("email") or "Unknown",
+                "started_at": started_at,
+                "first_submitted_at": None,
+                "deadline_at": None,
+                "overall_score": 0,
+                "overall_submission_time_seconds": None,
+                "overall_submitted_at": None,
+                "tab_switches": attempt.get("tab_switches", 0),
+                "paste_count": attempt.get("paste_count", 0),
+                "questions": {},
+            }
+            if started_at:
+                started_dt = parse_iso_ts(started_at)
+                if started_dt:
+                    student_rows[student_id]["deadline_at"] = (
+                        started_dt + timedelta(seconds=duration_seconds)
+                    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-  const markDeleted = (index) => {
-    setTestCases(prev => prev.map((tc, i) => i === index ? { ...tc, _status: 'deleted' } : tc));
-  };
+        row = student_rows[student_id]
+        qid = sub.get("question_id")
+        if qid:
+            row["questions"][qid] = {
+                "question_id": qid,
+                "submitted_at": sub.get("submitted_at"),
+                "score": sub.get("score", 0),
+                "language": sub.get("language"),
+                "auto_submit": bool(sub.get("auto_submit", False)),
+                "execution_time_ms": sub.get("execution_time_ms"),
+                "compilation_time_ms": sub.get("compilation_time_ms"),
+            }
 
-  const addNewTestCase = () => {
-    setTestCases(prev => [...prev, { input: '', expected_output: '', is_hidden: false, points: 1, _status: 'new' }]);
-  };
+        # Per-question aggregates
+        if qid in q_stats:
+            qs = q_stats[qid]
+            qs["count"] += 1
+            qs["score_sum"] += float(sub.get("score", 0) or 0)
+            exec_ms = sub.get("execution_time_ms")
+            if exec_ms is not None:
+                qs["exec_sum"] += int(exec_ms)
+                qs["exec_count"] += 1
+            comp_ms = sub.get("compilation_time_ms")
+            if comp_ms is not None:
+                qs["comp_sum"] += int(comp_ms)
+                qs["comp_count"] += 1
 
-  const visibleTestCases = testCases.map((tc, i) => ({ ...tc, _index: i })).filter(tc => tc._status !== 'deleted');
+        submitted_at = sub.get("submitted_at")
+        if submitted_at:
+            if (row["first_submitted_at"] is None) or (submitted_at < row["first_submitted_at"]):
+                row["first_submitted_at"] = submitted_at
+            if (row["overall_submitted_at"] is None) or (submitted_at > row["overall_submitted_at"]):
+                row["overall_submitted_at"] = submitted_at
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (isCustomTopic && !customTopic.trim()) { alert('Please enter a custom topic name.'); return; }
-    setSaving(true);
-    try {
-      const response = await apiClient.put(`${API_URL}/questions/${question.id}`, formData);
-      for (const tc of testCases.filter(tc => tc._status === 'deleted' && tc.id)) {
-        await apiClient.delete(`${API_URL}/test-cases/${tc.id}`);
-      }
-      for (const tc of testCases.filter(tc => tc._status === 'existing' && tc.id)) {
-        await apiClient.put(`${API_URL}/test-cases/${tc.id}`, { input: tc.input, expected_output: tc.expected_output, is_hidden: tc.is_hidden, points: tc.points });
-      }
-      for (const tc of testCases.filter(tc => tc._status === 'new')) {
-        await apiClient.post(`${API_URL}/test-cases`, { question_id: question.id, input: tc.input, expected_output: tc.expected_output, is_hidden: tc.is_hidden, points: tc.points });
-      }
-      onSuccess(response.data);
-    } catch (error) {
-      console.error('Error updating question:', error);
-      alert('Failed to save changes. Please try again.');
-    } finally {
-      setSaving(false);
+    # Fill missing students with attempts but no submissions
+    for student_id, attempt in attempts.items():
+        if student_id in student_rows:
+            continue
+        user = all_users.get(student_id, {})
+        started_at = attempt.get("started_at")
+        student_rows[student_id] = {
+            "student_id": student_id,
+            "student_name": user.get("name") or user.get("full_name") or "Unknown",
+            "student_email": user.get("email") or "Unknown",
+            "started_at": started_at,
+            "first_submitted_at": None,
+            "deadline_at": None,
+            "overall_score": 0,
+            "overall_submission_time_seconds": None,
+            "overall_submitted_at": None,
+            "tab_switches": attempt.get("tab_switches", 0),
+            "paste_count": attempt.get("paste_count", 0),
+            "questions": {},
+        }
+        if started_at:
+            started_dt = parse_iso_ts(started_at)
+            if started_dt:
+                student_rows[student_id]["deadline_at"] = (
+                    started_dt + timedelta(seconds=duration_seconds)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    # Compute overall score and submission time per student
+    total_points = sum(int(q.get("points", 0) or 0) for q in question_list)
+    for row in student_rows.values():
+        if total_points > 0:
+            earned_points = 0.0
+            for q in question_list:
+                qid = q["id"]
+                q_points = float(q.get("points", 0) or 0)
+                q_sub = row["questions"].get(qid)
+                q_score = float(q_sub.get("score", 0)) if q_sub else 0.0
+                earned_points += (q_score / 100.0) * q_points
+            row["overall_score"] = round((earned_points / total_points) * 100.0, 2)
+        if row["overall_submitted_at"]:
+            started_source = row["started_at"] or row.get("first_submitted_at")
+            started_dt = parse_iso_ts(started_source)
+            submitted_dt = parse_iso_ts(row["overall_submitted_at"])
+            if started_dt and submitted_dt:
+                row["overall_submission_time_seconds"] = max(0, int((submitted_dt - started_dt).total_seconds()))
+
+        # Aggregate execution/compilation time across submissions
+        total_exec = 0
+        total_comp = 0
+        has_exec = False
+        has_comp = False
+        for qid, qsub in row["questions"].items():
+            exec_ms = qsub.get("execution_time_ms")
+            comp_ms = qsub.get("compilation_time_ms")
+            if exec_ms is not None:
+                total_exec += int(exec_ms)
+                has_exec = True
+            if comp_ms is not None:
+                total_comp += int(comp_ms)
+                has_comp = True
+        row["total_execution_time_ms"] = total_exec if has_exec else None
+        row["total_compilation_time_ms"] = total_comp if has_comp else None
+
+    # Sort by overall_submitted_at desc, then name
+    sorted_rows = sorted(
+        student_rows.values(),
+        key=lambda r: (r.get("overall_submitted_at") or "", r.get("student_name") or ""),
+        reverse=True,
+    )
+
+    # Attach per-question averages
+    enriched_questions = []
+    for q in question_list:
+        qid = q["id"]
+        stats = q_stats.get(qid)
+        if stats and stats["count"] > 0:
+            avg_score = round(stats["score_sum"] / stats["count"], 2)
+        else:
+            avg_score = 0
+        avg_exec = (
+            int(stats["exec_sum"] / stats["exec_count"])
+            if stats and stats["exec_count"] > 0
+            else None
+        )
+        avg_comp = (
+            int(stats["comp_sum"] / stats["comp_count"])
+            if stats and stats["comp_count"] > 0
+            else None
+        )
+        enriched_questions.append({
+            **q,
+            "average_score": avg_score,
+            "avg_execution_time_ms": avg_exec,
+            "avg_compilation_time_ms": avg_comp,
+        })
+
+    return {
+        "test_id": test_id,
+        "test_title": test.get("title"),
+        "duration_minutes": test.get("duration_minutes", 60),
+        "questions": enriched_questions,
+        "students": sorted_rows,
     }
-  };
 
-  return (
-    <div style={{
-      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
-      alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, overflowY: 'auto', padding: '20px 0'
-    }}>
-      <div style={{ backgroundColor: 'white', borderRadius: '8px', padding: '24px', width: '100%', maxWidth: '700px', margin: '0 20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h3 style={{ fontSize: '20px', fontWeight: 600, color: '#333', margin: 0 }}>Edit Question</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: '4px' }}>
-            <X size={20} />
-          </button>
-        </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Question Title</label>
-            <input type="text" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }} required />
-          </div>
+# ─── Student Routes ───────────────────────────────────────────────────────────
 
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Description</label>
-            <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px', minHeight: '100px', boxSizing: 'border-box' }} required />
-          </div>
+@router.get("/student/tests", tags=["student"])
+def get_available_tests():
+    all_tests = db.reference("/tests").get() or {}
+    all_questions = db.reference("/questions").get() or {}
+    result = []
+    for tid, t in all_tests.items():
+        if t.get("is_active"):
+            q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
+            result.append({
+                "id": tid,
+                "title": t.get("title"),
+                "description": t.get("description"),
+                "duration_minutes": t.get("duration_minutes", 60),
+                "question_count": q_count,
+                "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
+                "assessment_id": t.get("assessment_id", ""),  # ← ADD THIS
+                "created_at": t.get("created_at"),
+                "anti_paste_enabled": t.get("anti_paste_enabled", True),
+                "tab_switch_enabled": t.get("tab_switch_enabled", True),
+                "tab_switch_limit": t.get("tab_switch_limit", 3),
+            })
+    return result
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Difficulty</label>
-              <select value={formData.difficulty} onChange={(e) => setFormData({ ...formData, difficulty: e.target.value })}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px' }}>
-                <option value="EASY">Easy</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HARD">Hard</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Topic</label>
-              <select value={isCustomTopic ? 'CUSTOM' : formData.topic} onChange={handleTopicChange}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px' }}>
-                {PRESET_TOPICS.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-                <option value="CUSTOM">✏️ Custom Topic...</option>
-              </select>
-              {isCustomTopic && (
-                <>
-                  <input type="text" placeholder="e.g. Machine Learning" value={customTopic}
-                    onChange={(e) => { const raw = e.target.value; setCustomTopic(raw); setFormData({ ...formData, topic: raw.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '') }); }}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #2196F3', borderRadius: '4px', fontSize: '14px', marginTop: '8px', boxSizing: 'border-box' }}
-                    autoFocus required={isCustomTopic} />
-                  {customTopic && <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>Saved as: <code style={{ color: '#2196F3' }}>{formData.topic}</code></div>}
-                </>
-              )}
-            </div>
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Points</label>
-              <input type="number" value={formData.points} onChange={(e) => setFormData({ ...formData, points: parseInt(e.target.value) })}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }} min="1" />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Time Limit (ms)</label>
-              <input type="number" value={formData.time_limit_ms} onChange={(e) => setFormData({ ...formData, time_limit_ms: parseInt(e.target.value) })}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }} min="100" step="100" />
-            </div>
-          </div>
+@router.get("/student/test/{test_id}/questions", tags=["student"])
+def get_test_questions_for_student(test_id: str):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
 
-          <div style={{ borderTop: '1px solid #eee', paddingTop: '16px', marginBottom: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ fontSize: '15px', fontWeight: 600, color: '#333', margin: 0 }}>
-                Test Cases <span style={{ fontSize: '12px', fontWeight: 400, color: '#999', marginLeft: '8px' }}>({visibleTestCases.length} total)</span>
-              </h4>
-              <button type="button" onClick={addNewTestCase}
-                style={{ background: 'none', border: 'none', color: '#2196F3', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }}>
-                + Add Test Case
-              </button>
-            </div>
+    all_questions = db.reference("/questions").get() or {}
+    all_tcs = db.reference("/test_cases").get() or {}
 
-            {visibleTestCases.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#f9f9f9', borderRadius: '4px', color: '#999', fontSize: '14px' }}>
-                No test cases. Click "+ Add Test Case" to add one.
-              </div>
-            )}
+    result = []
+    for qid, q in all_questions.items():
+        if q.get("test_id") == test_id:
+            test_cases = [
+                {
+                    "id": tcid,
+                    "input": tc.get("input"),
+                    "expected_output": tc.get("expected_output"),
+                    "is_hidden": tc.get("is_hidden", False),
+                    "points": tc.get("points", 1),
+                }
+                for tcid, tc in all_tcs.items()
+                if tc.get("question_id") == qid
+            ]
+            result.append({
+                "id": qid,
+                "title": q.get("title"),
+                "description": q.get("description"),
+                "difficulty": q.get("difficulty"),
+                "topic": q.get("topic"),
+                "points": q.get("points", 10),
+                "time_limit_ms": q.get("time_limit_ms", 2000),
+                "allowed_languages": parse_languages(test.get("allowed_languages", "python")),
+                "test_cases": test_cases,
+            })
 
-            {visibleTestCases.map((tc) => {
-              const idx = tc._index;
-              const isNew = tc._status === 'new';
-              return (
-                <div key={idx} style={{
-                  backgroundColor: isNew ? '#F3F9FF' : '#f9f9f9',
-                  border: `1px solid ${isNew ? '#BBDEFB' : '#eee'}`,
-                  borderRadius: '4px', padding: '12px', marginBottom: '10px'
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#666' }}>{isNew ? '🆕 New Test Case' : `Test Case #${idx + 1}`}</span>
-                    <button type="button"
-                      onClick={() => isNew ? setTestCases(prev => prev.filter((_, i) => i !== idx)) : markDeleted(idx)}
-                      style={{ background: 'none', border: 'none', color: '#F44336', cursor: 'pointer', fontSize: '12px' }}>
-                      ✕ Remove
-                    </button>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '4px', color: '#555' }}>Input</label>
-                      <textarea value={tc.input} onChange={(e) => updateTestCase(idx, 'input', e.target.value)}
-                        style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px', minHeight: '56px', fontFamily: 'monospace', boxSizing: 'border-box' }} required />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '4px', color: '#555' }}>Expected Output</label>
-                      <textarea value={tc.expected_output} onChange={(e) => updateTestCase(idx, 'expected_output', e.target.value)}
-                        style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px', minHeight: '56px', fontFamily: 'monospace', boxSizing: 'border-box' }} required />
-                    </div>
-                  </div>
-                  <label style={{ display: 'flex', alignItems: 'center', marginTop: '8px', fontSize: '13px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={tc.is_hidden} onChange={(e) => updateTestCase(idx, 'is_hidden', e.target.checked)} style={{ marginRight: '6px' }} />
-                    Hidden Test Case
-                  </label>
-                </div>
-              );
-            })}
-          </div>
+    return result
 
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button type="button" onClick={onClose}
-              style={{ flex: 1, padding: '10px', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', fontWeight: 500, backgroundColor: 'white', color: '#333' }}>
-              Cancel
-            </button>
-            <button type="submit" disabled={saving}
-              style={{ flex: 1, padding: '10px', backgroundColor: saving ? '#90CAF9' : '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 500 }}>
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
-export default TestDetailsPage;
+@router.get("/student/test/lookup/{code}", tags=["student"])
+def lookup_test(code: str):
+    all_tests = db.reference("/tests").get() or {}
+    all_questions = db.reference("/questions").get() or {}
+    for tid, t in all_tests.items():
+        if tid == code or t.get("assessment_id") == code:
+            q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
+            return {
+                "id": tid,
+                "title": t.get("title"),
+                "description": t.get("description"),
+                "duration_minutes": t.get("duration_minutes", 60),
+                "question_count": q_count,
+                "allowed_languages": parse_languages(t.get("allowed_languages", "python")),
+                "assessment_id": t.get("assessment_id", ""),
+                "created_at": t.get("created_at"),
+                "anti_paste_enabled": t.get("anti_paste_enabled", True),
+                "tab_switch_enabled": t.get("tab_switch_enabled", True),
+                "tab_switch_limit": t.get("tab_switch_limit", 3),
+            }
+    raise HTTPException(status_code=404, detail="Test not found")
+
+
+@router.get("/student/test/{test_id}/submissions", tags=["student"])
+def get_student_test_submissions(test_id: str, current_user: dict = Depends(get_current_user)):
+    student_id = current_user["id"]
+    all_subs = db.reference("/submissions").get() or {}
+    result = []
+    for sub_id, sub in all_subs.items():
+        if sub.get("student_id") != student_id:
+            continue
+        if sub.get("test_id") != test_id:
+            continue
+        result.append({
+            "submission_id": sub_id,
+            "question_id": sub.get("question_id"),
+            "test_id": sub.get("test_id"),
+            "language": sub.get("language"),
+            "code": sub.get("code"),
+            "score": sub.get("score", 0),
+            "passed": sub.get("passed", 0),
+            "total": sub.get("total", 0),
+            "submitted_at": sub.get("submitted_at"),
+        })
+    result.sort(key=lambda x: x.get("submitted_at") or "", reverse=True)
+    return result
+
+
+@router.post("/student/test/{test_id}/start", tags=["student"])
+def start_test_attempt(test_id: str, current_user: dict = Depends(get_current_user)):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    attempt = get_or_create_attempt(test_id, current_user["id"])
+    duration_seconds = get_test_duration_seconds(test)
+    started = parse_iso_ts(attempt.get("started_at"))
+    now = datetime.now(timezone.utc)
+    elapsed = (now - started).total_seconds() if started else 0
+    remaining = max(0, int(duration_seconds - elapsed))
+    return {
+        "test_id": test_id,
+        "started_at": attempt.get("started_at"),
+        "duration_seconds": duration_seconds,
+        "remaining_seconds": remaining,
+        "expired": remaining <= 0,
+        "forfeited": is_attempt_forfeited(attempt),
+    }
+
+
+@router.post("/student/test/{test_id}/tab-switch", tags=["student"])
+def log_tab_switch(
+    test_id: str,
+    data: TabSwitchLogRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    if attempt.get("forfeited"):
+        raise HTTPException(status_code=403, detail="Test forfeited.")
+
+    ts = data.timestamp or utcnow_iso()
+    event = {"count": data.count, "timestamp": ts}
+    db.reference(f"/attempts/{test_id}/{current_user['id']}/tab_switch_events").push(event)
+    attempt_ref.update({"tab_switches": data.count, "last_tab_switch_at": ts})
+    return {"logged": True, "count": data.count, "timestamp": ts}
+
+
+@router.post("/student/test/{test_id}/paste", tags=["student"])
+def log_paste(
+    test_id: str,
+    data: PasteLogRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    if attempt.get("forfeited"):
+        raise HTTPException(status_code=403, detail="Test forfeited.")
+
+    ts = data.timestamp or utcnow_iso()
+    event = {"count": data.count, "timestamp": ts}
+    db.reference(f"/attempts/{test_id}/{current_user['id']}/paste_events").push(event)
+    attempt_ref.update({"paste_count": data.count, "last_paste_at": ts})
+    return {"logged": True, "count": data.count, "timestamp": ts}
+
+
+@router.post("/student/test/{test_id}/forfeit", tags=["student"])
+def forfeit_test_attempt(
+    test_id: str,
+    data: ForfeitRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    if attempt.get("forfeited"):
+        return {
+            "message": "Test already forfeited.",
+            "forfeited": True,
+            "forfeited_at": attempt.get("forfeited_at"),
+            "tab_switches": attempt.get("tab_switches"),
+        }
+
+    updates = {
+        "forfeited": True,
+        "forfeited_at": utcnow_iso(),
+    }
+    if data.tab_switches is not None:
+        updates["tab_switches"] = data.tab_switches
+
+    attempt_ref.update(updates)
+    return {
+        "message": "Test forfeited.",
+        "forfeited": True,
+        "forfeited_at": updates["forfeited_at"],
+        "tab_switches": updates.get("tab_switches"),
+    }
+
+
+@router.post("/student/submit", tags=["student"])
+def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_current_user)):
+    question = db.reference(f"/questions/{data.question_id}").get()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    if question.get("test_id") != data.test_id:
+        raise HTTPException(status_code=400, detail="Question does not belong to this test")
+
+    test = db.reference(f"/tests/{data.test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    # Enforce one submission per question per student
+    all_subs = db.reference("/submissions").get() or {}
+    for sub in all_subs.values():
+        if sub.get("student_id") == current_user["id"] and sub.get("question_id") == data.question_id and sub.get("test_id") == data.test_id:
+            raise HTTPException(status_code=409, detail="Already submitted for this question")
+
+    # Enforce global test timer (allow small grace for auto-submit)
+    attempt = get_or_create_attempt(data.test_id, current_user["id"])
+    if is_attempt_forfeited(attempt):
+        raise HTTPException(status_code=403, detail="Test forfeited due to excessive tab switching.")
+    duration_seconds = get_test_duration_seconds(test)
+    if is_attempt_expired(attempt, duration_seconds):
+        if not data.auto_submit:
+            raise HTTPException(status_code=403, detail="Test time is over")
+        # Allow auto-submit within a small grace window after expiry
+        started = parse_iso_ts(attempt.get("started_at"))
+        if not started:
+            raise HTTPException(status_code=403, detail="Test time is over")
+        now = datetime.now(timezone.utc)
+        end_time = started + timedelta(seconds=duration_seconds)
+        if (now - end_time).total_seconds() > 5:
+            raise HTTPException(status_code=403, detail="Test time is over")
+
+    sub_id = str(uuid.uuid4())
+    submission = {
+        "student_id": current_user["id"],
+        "question_id": data.question_id,
+        "test_id": data.test_id,
+        "language": data.language,
+        "code": data.code,
+        "score": data.score,
+        "passed": data.passed,
+        "total": data.total,
+        "auto_submit": bool(data.auto_submit),
+        "execution_time_ms": data.execution_time_ms,
+        "compilation_time_ms": data.compilation_time_ms,
+        "submitted_at": utcnow_iso(),
+    }
+    db.reference(f"/submissions/{sub_id}").set(submission)
+    return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score} 
