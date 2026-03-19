@@ -136,11 +136,16 @@ def parse_date(date_str: Optional[str]):
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+# AFTER
 def parse_iso_ts(value: Optional[str]):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # If naive (no timezone), assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
         return None
 
@@ -916,3 +921,4 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
     }
     db.reference(f"/submissions/{sub_id}").set(submission)
     return {"message": "Submitted successfully", "submission_id": sub_id, "score": data.score} 
+
