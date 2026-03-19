@@ -114,6 +114,27 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
     return formatDuration(baseSeconds + execSec + compSec);
   };
 
+  const submissionTimeByStudent = (() => {
+    const map = {};
+    submissions.forEach((sub) => {
+      const sid = sub?.student_id;
+      const ts = sub?.submitted_at ? Date.parse(sub.submitted_at) : NaN;
+      if (!sid || Number.isNaN(ts)) return;
+      const entry = map[sid] || { min: ts, max: ts };
+      entry.min = Math.min(entry.min, ts);
+      entry.max = Math.max(entry.max, ts);
+      map[sid] = entry;
+    });
+    return map;
+  })();
+
+  const getFallbackSubmissionSeconds = (studentId) => {
+    if (!studentId) return null;
+    const entry = submissionTimeByStudent[studentId];
+    if (!entry) return null;
+    return Math.max(0, Math.floor((entry.max - entry.min) / 1000));
+  };
+
   const linkCode = test?.assessment_id || test?.id;
   const shareUrl = linkCode ? `${window.location.origin}/match/${linkCode}` : '';
 
@@ -438,6 +459,9 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                         const studentOverall = detailedAnalytics?.students?.find(
                           s => s.student_id === submission.student_id
                         );
+                        const overallSeconds =
+                          studentOverall?.overall_submission_time_seconds ??
+                          getFallbackSubmissionSeconds(submission.student_id);
                         return (
                         <tr key={submission.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                           <td style={{ padding: '12px 16px', fontSize: '14px' }}>
@@ -464,7 +488,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                             {formatDurationMs(submission.execution_time_ms)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '14px', color: '#666' }}>
-                            {formatDuration(studentOverall?.overall_submission_time_seconds)}
+                            {formatDuration(overallSeconds)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
                             {new Date(submission.submitted_at).toLocaleString('en-IN')}
