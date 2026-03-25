@@ -1,10 +1,8 @@
 import axios from 'axios';
-
-// Backend API base URL
-const API_BASE_URL = 'https://academicsslashcoder-production.up.railway.app';
+import { API_BASE } from '../config';
 
 export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -17,7 +15,7 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// ── Health ─────────────────────────────────────────────────────────────────
+// ── Health ────────────────────────────────────────────────────────────────────
 export const ping = async () => {
   const response = await apiClient.get('/ping');
   return response.data;
