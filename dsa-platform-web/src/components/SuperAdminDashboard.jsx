@@ -239,7 +239,7 @@ function UsersTab({ isRoot }) {
               </div>
               <div style={styles.userEmail}>{user.email}</div>
               <div style={styles.userMeta}>
-                Provider: {user.auth_provider} &nbsp;·&nbsp; Joined: {user.created_at ? new Date(user.created_at).toLocaleDateString() : "—"}
+                Provider: {user.auth_provider} &nbsp;·&nbsp; Joined: {formatDateOnly(user.created_at)}
               </div>
             </div>
 
@@ -330,7 +330,7 @@ function SubmissionsTab() {
                   </td>
                   <td style={styles.td}>
                     <span style={{ fontSize: 12, color: "#64748b" }}>
-                      {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : "—"}
+                      {formatDateTime(s.submitted_at)}
                     </span>
                   </td>
                 </tr>
@@ -487,6 +487,28 @@ export default function SuperAdminDashboard({ user, onLogout }) {
 }
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
+
+const isIST = Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Kolkata';
+
+const formatDateOnly = (iso) => {
+  if (!iso) return "--";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--";
+  const locale = isIST ? 'en-IN' : undefined;
+  const timeZone = isIST ? 'Asia/Kolkata' : undefined;
+  return d.toLocaleDateString(locale, { timeZone });
+};
+
+const formatDateTime = (iso) => {
+  if (!iso) return "--";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--";
+  const locale = isIST ? 'en-IN' : undefined;
+  const timeZone = isIST ? 'Asia/Kolkata' : undefined;
+  const formatted = d.toLocaleString(locale, { timeZone, hour12: true });
+  return isIST ? `${formatted} IST` : formatted;
+};
+
 const styles = {
   root: {
     minHeight: "100vh",
