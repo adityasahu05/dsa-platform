@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Backend API base URL
-const API_BASE_URL = 'https://dsa-platform-production-64f6.up.railway.app';
+const API_BASE_URL = 'https://academicsslashcoder-production.up.railway.app';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
