@@ -25,6 +25,10 @@ class Settings(BaseSettings):
         "http://localhost:5173",  # Vite dev server
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "https://testslashcoder.netlify.app",
+        "https://test.slashcoder.in",
+        "https://thriving-hamster-86353b.netlify.app",
+        "https://inquisitive-paletas-5ecd40.netlify.app",
     ]
     
     # Execution Limits
