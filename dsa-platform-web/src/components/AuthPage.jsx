@@ -871,8 +871,9 @@ import { useState } from 'react';
 import axios from 'axios';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { API_BASE } from '../config';
 
-const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/auth';
+const API_URL = API_BASE ? `${API_BASE}/api/auth` : undefined;
 
 const firebaseConfig = {
   apiKey: "AIzaSyDeR0IoojnXn_JoFjSteB8o_1YBg7mCc3Y",
