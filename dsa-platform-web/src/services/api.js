@@ -17,7 +17,7 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// ── Health ────────────────────────────────────────────────────────────────────
+// ── Health ─────────────────────────────────────────────────────────────────
 export const ping = async () => {
   const response = await apiClient.get('/ping');
   return response.data;
