@@ -36,6 +36,7 @@ class TestCreate(BaseModel):
     anti_paste_enabled: Optional[bool] = True
     tab_switch_enabled: Optional[bool] = True
     tab_switch_limit: Optional[int] = 3
+    auto_end_at_end_date: Optional[bool] = True
 
 
 class TestUpdate(BaseModel):
@@ -50,6 +51,7 @@ class TestUpdate(BaseModel):
     anti_paste_enabled: Optional[bool] = None
     tab_switch_enabled: Optional[bool] = None
     tab_switch_limit: Optional[int] = None
+    auto_end_at_end_date: Optional[bool] = None
 
 
 class QuestionCreate(BaseModel):
@@ -136,6 +138,14 @@ def parse_date(date_str: Optional[str]):
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+def ensure_session_id(test_id: str, test: dict) -> str:
+    session_id = test.get("current_session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        db.reference(f"/tests/{test_id}").update({"current_session_id": session_id})
+        test["current_session_id"] = session_id
+    return session_id
+
 # AFTER
 def parse_iso_ts(value: Optional[str]):
     if not value:
@@ -149,6 +159,102 @@ def parse_iso_ts(value: Optional[str]):
     except Exception:
         return None
 
+def is_test_expired(test: dict, now: Optional[datetime] = None) -> bool:
+    end_dt = parse_iso_ts(test.get("end_date"))
+    if not end_dt:
+        return False
+    ref = now or datetime.now(timezone.utc)
+    return ref >= end_dt
+
+def ensure_test_closed_if_expired(test_id: str, test: dict, now: Optional[datetime] = None) -> dict:
+    if not test:
+        return test
+    auto_end = test.get("auto_end_at_end_date")
+    if auto_end is None:
+        auto_end = True
+    if test.get("is_active") and auto_end and is_test_expired(test, now=now):
+        db.reference(f"/tests/{test_id}").update({"is_active": False})
+        test["is_active"] = False
+    return test
+
+def compute_live_status(test_id: str, test: dict, now: Optional[datetime] = None) -> dict:
+    if not test:
+        return {
+            "test_id": test_id,
+            "is_active": False,
+            "active_count": 0,
+            "total_attempts": 0,
+            "forfeited_count": 0,
+            "expired_count": 0,
+            "submitted_count": 0,
+            "active_students": [],
+        }
+    ref_now = now or datetime.now(timezone.utc)
+    session_id = ensure_session_id(test_id, test)
+    attempts = db.reference(f"/attempts/{test_id}/{session_id}").get() or {}
+    all_users = db.reference("/users").get() or {}
+    all_subs = db.reference("/submissions").get() or {}
+    submitted_student_ids = {
+        s.get("student_id")
+        for s in all_subs.values()
+        if s.get("test_id") == test_id
+        and s.get("session_id") == session_id
+        and s.get("student_id")
+    }
+
+    active_students = []
+    total_attempts = 0
+    forfeited_count = 0
+    expired_count = 0
+    submitted_count = 0
+
+    for student_id, attempt in attempts.items():
+        started_at = attempt.get("started_at")
+        if not started_at:
+            continue
+        total_attempts += 1
+        duration_seconds = get_effective_duration_seconds(test, started_at=started_at, now=ref_now)
+        expired = is_attempt_expired(attempt, duration_seconds)
+        forfeited = is_attempt_forfeited(attempt)
+        submitted = student_id in submitted_student_ids
+
+        if forfeited:
+            forfeited_count += 1
+        if expired:
+            expired_count += 1
+        if submitted:
+            submitted_count += 1
+
+        if (not expired) and (not forfeited):
+            started_dt = parse_iso_ts(started_at)
+            elapsed = (ref_now - started_dt).total_seconds() if started_dt else 0
+            remaining = max(0, int(duration_seconds - elapsed))
+            user = all_users.get(student_id, {}) if student_id else {}
+            active_students.append({
+                "student_id": student_id,
+                "student_name": user.get("name") or user.get("full_name") or "Unknown",
+                "student_email": user.get("email") or "Unknown",
+                "started_at": started_at,
+                "remaining_seconds": remaining,
+            })
+
+    return {
+        "test_id": test_id,
+        "current_session_id": session_id,
+        "is_active": bool(test.get("is_active")),
+        "start_date": test.get("start_date"),
+        "end_date": test.get("end_date"),
+        "auto_end_at_end_date": test.get("auto_end_at_end_date", True),
+        "now": ref_now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "active_count": len(active_students),
+        "total_attempts": total_attempts,
+        "forfeited_count": forfeited_count,
+        "expired_count": expired_count,
+        "submitted_count": submitted_count,
+        "active_students": active_students,
+        "session_history": test.get("session_history", []),
+    }
+
 def get_test_duration_seconds(test: dict) -> int:
     try:
         minutes = int(test.get("duration_minutes", 60))
@@ -156,8 +262,24 @@ def get_test_duration_seconds(test: dict) -> int:
         minutes = 60
     return max(1, minutes * 60)
 
-def get_or_create_attempt(test_id: str, student_id: str) -> dict:
-    attempt_ref = db.reference(f"/attempts/{test_id}/{student_id}")
+def get_effective_duration_seconds(test: dict, started_at: Optional[str] = None, now: Optional[datetime] = None) -> int:
+    """
+    Effective duration is the smaller of:
+    - configured test duration
+    - time remaining until end_date (if set)
+    """
+    base = get_test_duration_seconds(test)
+    end_dt = parse_iso_ts(test.get("end_date"))
+    if not end_dt:
+        return base
+    ref_dt = parse_iso_ts(started_at) if started_at else (now or datetime.now(timezone.utc))
+    if not ref_dt:
+        return base
+    remaining_window = (end_dt - ref_dt).total_seconds()
+    return max(1, int(min(base, remaining_window)))
+
+def get_or_create_attempt(test_id: str, session_id: str, student_id: str) -> dict:
+    attempt_ref = db.reference(f"/attempts/{test_id}/{session_id}/{student_id}")
     attempt = attempt_ref.get() or {}
     started_at = attempt.get("started_at")
     if not started_at:
@@ -177,6 +299,7 @@ def is_attempt_forfeited(attempt: dict) -> bool:
     return bool(attempt.get("forfeited"))
 
 def format_test(test_id: str, test: dict) -> dict:
+    ensure_session_id(test_id, test)
     return {
         "id": test_id,
         "title": test.get("title"),
@@ -194,6 +317,9 @@ def format_test(test_id: str, test: dict) -> dict:
         "anti_paste_enabled": test.get("anti_paste_enabled", True),
         "tab_switch_enabled": test.get("tab_switch_enabled", True),
         "tab_switch_limit": test.get("tab_switch_limit", 3),
+        "auto_end_at_end_date": test.get("auto_end_at_end_date", True),
+        "current_session_id": test.get("current_session_id"),
+        "session_history": test.get("session_history", []),
     }
 
 
@@ -202,16 +328,28 @@ def format_test(test_id: str, test: dict) -> dict:
 @router.get("/tests")
 def get_all_tests(current_user: dict = Depends(require_teacher)):
     all_tests = db.reference("/tests").get() or {}
+    now = datetime.now(timezone.utc)
     return [
-        format_test(tid, t)
+        format_test(tid, ensure_test_closed_if_expired(tid, t, now=now))
         for tid, t in all_tests.items()
         if t.get("teacher_id") == current_user["id"]
     ]
+
+@router.get("/tests/{test_id}/live-status")
+def get_test_live_status(test_id: str, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
+    now = datetime.now(timezone.utc)
+    test = ensure_test_closed_if_expired(test_id, test, now=now)
+    return compute_live_status(test_id, test, now=now)
 
 
 @router.post("/tests")
 def create_test(test: TestCreate, current_user: dict = Depends(require_teacher)):
     test_id = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
     tab_switch_limit = int(test.tab_switch_limit or 3)
     if tab_switch_limit < 1:
         tab_switch_limit = 1
@@ -231,6 +369,9 @@ def create_test(test: TestCreate, current_user: dict = Depends(require_teacher))
         "anti_paste_enabled": bool(test.anti_paste_enabled) if test.anti_paste_enabled is not None else True,
         "tab_switch_enabled": bool(test.tab_switch_enabled) if test.tab_switch_enabled is not None else True,
         "tab_switch_limit": tab_switch_limit,
+        "auto_end_at_end_date": bool(test.auto_end_at_end_date) if test.auto_end_at_end_date is not None else True,
+        "current_session_id": session_id,
+        "session_history": [],
     }
     db.reference(f"/tests/{test_id}").set(test_data)
     return format_test(test_id, test_data)
@@ -256,6 +397,55 @@ def update_test(test_id: str, data: TestUpdate, current_user: dict = Depends(req
     if data.tab_switch_limit is not None:
         limit = int(data.tab_switch_limit)
         updates["tab_switch_limit"] = max(1, limit)
+    if data.auto_end_at_end_date is not None:
+        updates["auto_end_at_end_date"] = bool(data.auto_end_at_end_date)
+    test_ref.update(updates)
+    updated = test_ref.get()
+    return format_test(test_id, updated)
+
+@router.post("/tests/{test_id}/start-now")
+def start_test_now(test_id: str, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
+    now = utcnow_iso()
+    test_ref.update({"start_date": now, "is_active": True})
+    updated = test_ref.get()
+    return format_test(test_id, updated)
+
+@router.post("/tests/{test_id}/end-now")
+def end_test_now(test_id: str, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
+    now = utcnow_iso()
+    test_ref.update({"end_date": now, "is_active": False})
+    updated = test_ref.get()
+    return format_test(test_id, updated)
+
+@router.post("/tests/{test_id}/restart-session")
+def restart_test_session(test_id: str, current_user: dict = Depends(require_teacher)):
+    test_ref = db.reference(f"/tests/{test_id}")
+    test = test_ref.get()
+    if not test or test.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Test not found")
+    now = datetime.now(timezone.utc)
+    new_session_id = str(uuid.uuid4())
+    prior_session_id = test.get("current_session_id")
+    history = list(test.get("session_history") or [])
+    if prior_session_id:
+        history.append(prior_session_id)
+    updates = {
+        "current_session_id": new_session_id,
+        "start_date": utcnow_iso(),
+        "is_active": True,
+        "session_history": history,
+    }
+    end_dt = parse_iso_ts(test.get("end_date"))
+    if end_dt and end_dt <= now:
+        updates["end_date"] = None
     test_ref.update(updates)
     updated = test_ref.get()
     return format_test(test_id, updated)
@@ -437,9 +627,14 @@ def get_test_analytics(test_id: str):
     all_questions = db.reference("/questions").get() or {}
     questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
     all_subs = db.reference("/submissions").get() or {}
+    test = db.reference(f"/tests/{test_id}").get() or {}
+    session_id = ensure_session_id(test_id, test)
     analytics = {"test_id": test_id, "total_questions": len(questions), "questions": []}
     for qid, q in questions.items():
-        subs = [s for s in all_subs.values() if s.get("question_id") == qid]
+        subs = [
+            s for s in all_subs.values()
+            if s.get("question_id") == qid and s.get("session_id") == session_id
+        ]
         total = len(subs)
         passed = sum(1 for s in subs if s.get("score") == 100)
         avg = sum(s.get("score", 0) for s in subs) / total if total > 0 else 0
@@ -457,6 +652,7 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
     test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(test_id, test)
 
     all_questions = db.reference("/questions").get() or {}
     questions = {qid: q for qid, q in all_questions.items() if q.get("test_id") == test_id}
@@ -467,7 +663,7 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
 
     all_subs = db.reference("/submissions").get() or {}
     all_users = db.reference("/users").get() or {}
-    attempts = db.reference(f"/attempts/{test_id}").get() or {}
+    attempts = db.reference(f"/attempts/{test_id}/{session_id}").get() or {}
 
     duration_seconds = get_test_duration_seconds(test)
 
@@ -487,7 +683,7 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
     # Build per-student aggregation
     student_rows = {}
     for sub in all_subs.values():
-        if sub.get("test_id") != test_id:
+        if sub.get("test_id") != test_id or sub.get("session_id") != session_id:
             continue
         student_id = sub.get("student_id")
         if not student_id:
@@ -513,8 +709,9 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
             if started_at:
                 started_dt = parse_iso_ts(started_at)
                 if started_dt:
+                    effective_duration = get_effective_duration_seconds(test, started_at=started_at)
                     student_rows[student_id]["deadline_at"] = (
-                        started_dt + timedelta(seconds=duration_seconds)
+                        started_dt + timedelta(seconds=effective_duration)
                     ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         row = student_rows[student_id]
@@ -574,8 +771,9 @@ def get_test_analytics_detailed(test_id: str, current_user: dict = Depends(requi
         if started_at:
             started_dt = parse_iso_ts(started_at)
             if started_dt:
+                effective_duration = get_effective_duration_seconds(test, started_at=started_at)
                 student_rows[student_id]["deadline_at"] = (
-                    started_dt + timedelta(seconds=duration_seconds)
+                    started_dt + timedelta(seconds=effective_duration)
                 ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     # Compute overall score and submission time per student
@@ -663,8 +861,12 @@ def get_available_tests():
     all_tests = db.reference("/tests").get() or {}
     all_questions = db.reference("/questions").get() or {}
     result = []
+    now = datetime.now(timezone.utc)
     for tid, t in all_tests.items():
-        if t.get("is_active"):
+        t = ensure_test_closed_if_expired(tid, t, now=now)
+        start_dt = parse_iso_ts(t.get("start_date"))
+        end_dt = parse_iso_ts(t.get("end_date"))
+        if t.get("is_active") and (not start_dt or now >= start_dt) and (not end_dt or now < end_dt):
             q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
             result.append({
                 "id": tid,
@@ -724,8 +926,10 @@ def get_test_questions_for_student(test_id: str):
 def lookup_test(code: str):
     all_tests = db.reference("/tests").get() or {}
     all_questions = db.reference("/questions").get() or {}
+    now = datetime.now(timezone.utc)
     for tid, t in all_tests.items():
         if tid == code or t.get("assessment_id") == code:
+            t = ensure_test_closed_if_expired(tid, t, now=now)
             q_count = sum(1 for q in all_questions.values() if q.get("test_id") == tid)
             return {
                 "id": tid,
@@ -746,6 +950,10 @@ def lookup_test(code: str):
 @router.get("/student/test/{test_id}/submissions", tags=["student"])
 def get_student_test_submissions(test_id: str, current_user: dict = Depends(get_current_user)):
     student_id = current_user["id"]
+    test = db.reference(f"/tests/{test_id}").get()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(test_id, test)
     all_subs = db.reference("/submissions").get() or {}
     result = []
     for sub_id, sub in all_subs.items():
@@ -753,10 +961,13 @@ def get_student_test_submissions(test_id: str, current_user: dict = Depends(get_
             continue
         if sub.get("test_id") != test_id:
             continue
+        if sub.get("session_id") != session_id:
+            continue
         result.append({
             "submission_id": sub_id,
             "question_id": sub.get("question_id"),
             "test_id": sub.get("test_id"),
+            "session_id": sub.get("session_id"),
             "language": sub.get("language"),
             "code": sub.get("code"),
             "score": sub.get("score", 0),
@@ -773,15 +984,43 @@ def start_test_attempt(test_id: str, current_user: dict = Depends(get_current_us
     test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
-    attempt = get_or_create_attempt(test_id, current_user["id"])
-    duration_seconds = get_test_duration_seconds(test)
-    started = parse_iso_ts(attempt.get("started_at"))
     now = datetime.now(timezone.utc)
-    elapsed = (now - started).total_seconds() if started else 0
+    test = ensure_test_closed_if_expired(test_id, test, now=now)
+    session_id = ensure_session_id(test_id, test)
+    start_dt = parse_iso_ts(test.get("start_date"))
+    end_dt = parse_iso_ts(test.get("end_date"))
+
+    if start_dt and now < start_dt:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Test entry opens at {start_dt.isoformat().replace('+00:00','Z')}"
+        )
+
+    attempt_ref = db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}")
+    attempt = attempt_ref.get() or {}
+    started_at = attempt.get("started_at")
+
+    if end_dt and now > end_dt and not started_at:
+        raise HTTPException(status_code=403, detail="Test entry window has closed.")
+
+    if not started_at:
+        # New attempt starts now, but duration may be reduced by end_date
+        duration_seconds = get_effective_duration_seconds(test, started_at=None, now=now)
+        if end_dt and (end_dt - now).total_seconds() <= 0:
+            raise HTTPException(status_code=403, detail="Test entry window has closed.")
+        attempt = {"started_at": utcnow_iso()}
+        attempt_ref.set(attempt)
+        started_at = attempt.get("started_at")
+        elapsed = 0
+    else:
+        duration_seconds = get_effective_duration_seconds(test, started_at=started_at, now=now)
+        started = parse_iso_ts(started_at)
+        elapsed = (now - started).total_seconds() if started else 0
+
     remaining = max(0, int(duration_seconds - elapsed))
     return {
         "test_id": test_id,
-        "started_at": attempt.get("started_at"),
+        "started_at": started_at,
         "duration_seconds": duration_seconds,
         "remaining_seconds": remaining,
         "expired": remaining <= 0,
@@ -798,15 +1037,16 @@ def log_tab_switch(
     test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(test_id, test)
 
-    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt_ref = db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}")
     attempt = attempt_ref.get() or {}
     if attempt.get("forfeited"):
         raise HTTPException(status_code=403, detail="Test forfeited.")
 
     ts = data.timestamp or utcnow_iso()
     event = {"count": data.count, "timestamp": ts}
-    db.reference(f"/attempts/{test_id}/{current_user['id']}/tab_switch_events").push(event)
+    db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}/tab_switch_events").push(event)
     attempt_ref.update({"tab_switches": data.count, "last_tab_switch_at": ts})
     return {"logged": True, "count": data.count, "timestamp": ts}
 
@@ -820,15 +1060,16 @@ def log_paste(
     test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(test_id, test)
 
-    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt_ref = db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}")
     attempt = attempt_ref.get() or {}
     if attempt.get("forfeited"):
         raise HTTPException(status_code=403, detail="Test forfeited.")
 
     ts = data.timestamp or utcnow_iso()
     event = {"count": data.count, "timestamp": ts}
-    db.reference(f"/attempts/{test_id}/{current_user['id']}/paste_events").push(event)
+    db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}/paste_events").push(event)
     attempt_ref.update({"paste_count": data.count, "last_paste_at": ts})
     return {"logged": True, "count": data.count, "timestamp": ts}
 
@@ -842,8 +1083,9 @@ def forfeit_test_attempt(
     test = db.reference(f"/tests/{test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(test_id, test)
 
-    attempt_ref = db.reference(f"/attempts/{test_id}/{current_user['id']}")
+    attempt_ref = db.reference(f"/attempts/{test_id}/{session_id}/{current_user['id']}")
     attempt = attempt_ref.get() or {}
     if attempt.get("forfeited"):
         return {
@@ -880,18 +1122,24 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
     test = db.reference(f"/tests/{data.test_id}").get()
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    session_id = ensure_session_id(data.test_id, test)
 
     # Enforce one submission per question per student
     all_subs = db.reference("/submissions").get() or {}
     for sub in all_subs.values():
-        if sub.get("student_id") == current_user["id"] and sub.get("question_id") == data.question_id and sub.get("test_id") == data.test_id:
+        if (
+            sub.get("student_id") == current_user["id"]
+            and sub.get("question_id") == data.question_id
+            and sub.get("test_id") == data.test_id
+            and sub.get("session_id") == session_id
+        ):
             raise HTTPException(status_code=409, detail="Already submitted for this question")
 
     # Enforce global test timer (allow small grace for auto-submit)
-    attempt = get_or_create_attempt(data.test_id, current_user["id"])
+    attempt = get_or_create_attempt(data.test_id, session_id, current_user["id"])
     if is_attempt_forfeited(attempt):
         raise HTTPException(status_code=403, detail="Test forfeited due to excessive tab switching.")
-    duration_seconds = get_test_duration_seconds(test)
+    duration_seconds = get_effective_duration_seconds(test, started_at=attempt.get("started_at"))
     if is_attempt_expired(attempt, duration_seconds):
         if not data.auto_submit:
             raise HTTPException(status_code=403, detail="Test time is over")
@@ -909,6 +1157,7 @@ def submit_solution(data: SubmitRequest, current_user: dict = Depends(get_curren
         "student_id": current_user["id"],
         "question_id": data.question_id,
         "test_id": data.test_id,
+        "session_id": session_id,
         "language": data.language,
         "code": data.code,
         "score": data.score,
