@@ -1,12 +1,11 @@
-
-
-
-
 import { useState, useEffect } from 'react';
 import { Plus, Search, Clock, Eye, X, Copy, Tag, Lock, Globe, ToggleLeft, ToggleRight, Pencil, Check, Trash2 } from 'lucide-react';
 import { apiClient } from '../services/api';
 import TestDetailsPage from './TestDetailsPage';
 import QuestionsModal from './QuestionsModal';
+
+
+const isIST = Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Kolkata';
 
 const API_URL = '/api/teacher'; // v18
 
@@ -20,8 +19,13 @@ const LANGUAGE_OPTIONS = [
 function formatDate(iso) {
   if (!iso) return 'Not set';
   const d = new Date(iso);
-  return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) +
-    ' ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST';
+  if (Number.isNaN(d.getTime())) return 'Not set';
+  const locale = isIST ? 'en-IN' : undefined;
+  const timeZone = isIST ? 'Asia/Kolkata' : undefined;
+  const datePart = d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric', timeZone });
+  const timePart = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: true, timeZone });
+  const combined = `${datePart} ${timePart}`;
+  return isIST ? `${combined} IST` : combined;
 }
 
 function toDatetimeLocal(iso) {
@@ -71,7 +75,7 @@ function EditableField({ label, value, onSave, type = 'text', options = null }) 
 }
 
 // ─── Test Info Modal ──────────────────────────────────────────────────────────
-function TestInfoModal({ test, onClose, onUpdate }) {
+function TestInfoModal({ test, onClose, onUpdate, onLiveControl, onEndNow, onRestartSession }) {
   const [localTest, setLocalTest] = useState(test);
   const [copied, setCopied] = useState(false);
   const testLink = `${window.location.origin}/test/${test.id}`;
@@ -95,6 +99,26 @@ function TestInfoModal({ test, onClose, onUpdate }) {
     } catch (err) { console.error('Toggle failed:', err); }
   };
 
+  const startNow = async () => {
+    try {
+      const res = await apiClient.post(`${API_URL}/tests/${localTest.id}/start-now`);
+      const updated = { ...localTest, ...res.data };
+      setLocalTest(updated);
+      onUpdate(updated);
+    } catch (err) {
+      console.error('Start now failed:', err);
+      alert('Failed to start test. Please try again.');
+    }
+  };
+
+  const endNow = () => {
+    if (onEndNow) return onEndNow(localTest);
+  };
+
+  const restartSession = () => {
+    if (onRestartSession) return onRestartSession(localTest);
+  };
+
   const copyLink = () => {
     navigator.clipboard.writeText(testLink);
     setCopied(true);
@@ -105,6 +129,7 @@ function TestInfoModal({ test, onClose, onUpdate }) {
   const antiPasteEnabled = localTest.anti_paste_enabled !== false;
   const tabSwitchEnabled = localTest.tab_switch_enabled !== false;
   const tabSwitchLimit = localTest.tab_switch_limit ?? 3;
+  const autoEndAtEndDate = localTest.auto_end_at_end_date !== false;
 
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
@@ -124,14 +149,15 @@ function TestInfoModal({ test, onClose, onUpdate }) {
         {/* Body */}
         <div style={{ padding: '24px' }}>
 
-          {/* Test Access Toggle */}
-          <div style={{ marginBottom: '20px', padding: '14px 16px', background: '#f8f9fa', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>Test Access</div>
-              <div style={{ fontSize: '12px', color: '#999', marginTop: '2px' }}>
-                {localTest.is_active ? 'Students can access this test' : 'Test is hidden from students'}
-              </div>
+        {/* Test Access Toggle */}
+        <div style={{ marginBottom: '20px', padding: '14px 16px', background: '#f8f9fa', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>Test Access</div>
+            <div style={{ fontSize: '12px', color: '#999', marginTop: '2px' }}>
+              {localTest.is_active ? 'Students can access this test' : 'Test is hidden from students'}
             </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', fontWeight: 500, color: localTest.is_active ? '#4CAF50' : '#999' }}>
                 {localTest.is_active ? 'On' : 'Off'}
@@ -140,7 +166,38 @@ function TestInfoModal({ test, onClose, onUpdate }) {
                 {localTest.is_active ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
               </button>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!localTest.is_active && (
+                <button
+                  onClick={startNow}
+                  style={{ padding: '6px 10px', backgroundColor: '#E8F5E9', color: '#2E7D32', border: '1px solid #C8E6C9', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                >
+                  Start Now
+                </button>
+              )}
+              {localTest.is_active && (
+                <button
+                  onClick={endNow}
+                  style={{ padding: '6px 10px', backgroundColor: '#FFEBEE', color: '#C62828', border: '1px solid #FFCDD2', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                >
+                  End Now
+                </button>
+              )}
+              <button
+                onClick={restartSession}
+                style={{ padding: '6px 10px', backgroundColor: '#FFF3E0', color: '#EF6C00', border: '1px solid #FFE0B2', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+              >
+                Restart Session
+              </button>
+              <button
+                onClick={() => onLiveControl && onLiveControl(localTest)}
+                style={{ padding: '6px 10px', backgroundColor: '#fff', color: '#1565c0', border: '1px solid #90CAF9', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+              >
+                Live Control
+              </button>
+            </div>
           </div>
+        </div>
 
           {/* Anti-Cheat Settings */}
           <div style={{ marginBottom: '20px', padding: '14px 16px', background: '#f8f9fa', borderRadius: '8px' }}>
@@ -200,6 +257,21 @@ function TestInfoModal({ test, onClose, onUpdate }) {
             onSave={v => save('end_date', v || null)} />
           <div style={{ fontSize: '12px', color: '#999', marginTop: '-10px', marginBottom: '16px' }}>
             {formatDate(localTest.end_date)}
+          </div>
+
+          {/* Entry Window Summary */}
+          <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666', background: '#f5f5f5', border: '1px solid #eee', borderRadius: '6px', padding: '10px 12px' }}>
+            <div style={{ fontWeight: 600, color: '#333', marginBottom: '4px' }}>Entry Window</div>
+            <div>Opens: {formatDate(localTest.start_date)}</div>
+            <div>Closes: {formatDate(localTest.end_date)}</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '12px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={autoEndAtEndDate}
+                onChange={() => save('auto_end_at_end_date', !autoEndAtEndDate)}
+              />
+              Auto-end test at end date
+            </label>
           </div>
 
           {/* Test Link */}
@@ -263,6 +335,355 @@ function TestInfoModal({ test, onClose, onUpdate }) {
 }
 
 // ─── Teacher Dashboard ────────────────────────────────────────────────────────
+
+// ??? End Test Confirmation Modal ?????????????????????????????????????????????
+function EndTestConfirmModal({ test, onCancel, onConfirm }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchStatus = async () => {
+      try {
+        setLoading(true);
+        const res = await apiClient.get(`${API_URL}/tests/${test.id}/live-status`);
+        if (mounted) setStatus(res.data);
+      } catch (err) {
+        console.error('Failed to load live status:', err);
+        if (mounted) setError('Failed to load live status.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    fetchStatus();
+    return () => { mounted = false; };
+  }, [test.id]);
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+      <div style={{ background: '#fff', borderRadius: '10px', width: '100%', maxWidth: '480px', margin: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#333' }}>End Test Now?</div>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999' }}><X size={18} /></button>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <div style={{ fontSize: '14px', color: '#444', marginBottom: '10px' }}>
+            This will immediately close <strong>{test.title}</strong> for new entries.
+          </div>
+          {loading && <div style={{ fontSize: '13px', color: '#999' }}>Loading live status?</div>}
+          {!loading && error && <div style={{ fontSize: '13px', color: '#C62828' }}>{error}</div>}
+          {!loading && !error && status && (
+            <div style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#555' }}>
+              <div style={{ fontWeight: 600, color: '#333', marginBottom: '6px' }}>Active Students</div>
+              <div>{status.active_count} currently active</div>
+              <div style={{ marginTop: '6px', color: '#777' }}>Total attempts: {status.total_attempts}</div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid #eee', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={onConfirm} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#C62828', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>End Test Now</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Restart Session Confirmation Modal ---
+function RestartSessionConfirmModal({ test, onCancel, onConfirm }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchStatus = async () => {
+      try {
+        setLoading(true);
+        const res = await apiClient.get(`${API_URL}/tests/${test.id}/live-status`);
+        if (mounted) setStatus(res.data);
+      } catch (err) {
+        console.error('Failed to load live status:', err);
+        if (mounted) setError('Failed to load live status.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    fetchStatus();
+    return () => { mounted = false; };
+  }, [test.id]);
+
+  const formatRemaining = (seconds) => {
+    if (seconds === null || seconds === undefined) return '--:--';
+    const total = Math.max(0, Number(seconds) || 0);
+    const m = Math.floor(total / 60).toString().padStart(2, '0');
+    const s = Math.floor(total % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const activeStudents = status?.active_students || [];
+  const hasExpiredWindow =
+    Boolean(status?.end_date && status?.now) &&
+    new Date(status.end_date).getTime() <= new Date(status.now).getTime();
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+      <div style={{ background: '#fff', borderRadius: '10px', width: '100%', maxWidth: '620px', margin: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: '#333' }}>Restart Session?</div>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999' }}><X size={18} /></button>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <div style={{ fontSize: '14px', color: '#444', marginBottom: '10px' }}>
+            This creates a new session for <strong>{test.title}</strong>. Students can attempt again.
+          </div>
+          {loading && <div style={{ fontSize: '13px', color: '#999' }}>Loading live status?</div>}
+          {!loading && error && <div style={{ fontSize: '13px', color: '#C62828' }}>{error}</div>}
+          {!loading && !error && status && (
+            <>
+              <div style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#555' }}>
+                <div style={{ fontWeight: 600, color: '#333', marginBottom: '6px' }}>Active Students</div>
+                <div>{status.active_count} currently active</div>
+                {activeStudents.length > 0 ? (
+                  <div style={{ marginTop: '10px', border: '1px solid #e9e9e9', borderRadius: '6px', overflow: 'hidden', background: '#fff' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 2fr 90px', gap: '8px', padding: '8px 10px', background: '#f7f7f7', borderBottom: '1px solid #eee', fontSize: '11px', fontWeight: 700, color: '#777', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                      <span>Name</span>
+                      <span>Email</span>
+                      <span style={{ textAlign: 'right' }}>Remaining</span>
+                    </div>
+                    {activeStudents.map((s) => (
+                      <div key={s.student_id} style={{ display: 'grid', gridTemplateColumns: '1.5fr 2fr 90px', gap: '8px', padding: '8px 10px', fontSize: '12px', borderBottom: '1px solid #f1f1f1' }}>
+                        <span style={{ color: '#333', fontWeight: 600 }}>{s.student_name}</span>
+                        <span style={{ color: '#777', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.student_email}</span>
+                        <span style={{ color: '#555', textAlign: 'right', fontWeight: 600 }}>{formatRemaining(s.remaining_seconds)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: '#888' }}>No active students right now.</div>
+                )}
+              </div>
+              <div style={{ marginTop: '10px', fontSize: '12px', color: '#666', background: '#fffaf2', border: '1px solid #fde3b0', borderRadius: '6px', padding: '8px 10px' }}>
+                This action creates a new session ID and archives the current one in Session History.
+                {hasExpiredWindow ? ' The previous end date is in the past, so restart will reopen the test window.' : ''}
+              </div>
+            </>
+          )}
+        </div>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid #eee', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={onConfirm} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#EF6C00', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>Restart Session</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ??? Live Control Page ???????????????????????????????????????????????????????
+function LiveControlPage({ test, onBack, onStartNow, onEndNow, onRestartSession, onTestUpdate }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [autoEndSaving, setAutoEndSaving] = useState(false);
+
+  const formatRemaining = (seconds) => {
+    if (seconds === null || seconds === undefined) return '--:--';
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const fetchStatus = async () => {
+    try {
+      setLoading(true);
+      const res = await apiClient.get(`${API_URL}/tests/${test.id}/live-status`);
+      setStatus(res.data);
+      setError('');
+    } catch (err) {
+      console.error('Failed to load live status:', err);
+      setError('Failed to load live status.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      if (!mounted) return;
+      await fetchStatus();
+    };
+    load();
+    const id = setInterval(() => { if (mounted) fetchStatus(); }, 10000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [test.id]);
+
+  const handleAutoEndToggle = async () => {
+    if (!status) return;
+    const next = !(status.auto_end_at_end_date !== false);
+    try {
+      setAutoEndSaving(true);
+      const res = await apiClient.patch(`${API_URL}/tests/${test.id}`, { auto_end_at_end_date: next });
+      setStatus(prev => ({ ...(prev || {}), auto_end_at_end_date: res.data.auto_end_at_end_date }));
+      if (onTestUpdate) onTestUpdate(res.data);
+    } catch (err) {
+      console.error('Failed to update auto-end setting:', err);
+      alert('Failed to update auto-end setting. Please try again.');
+    } finally {
+      setAutoEndSaving(false);
+    }
+  };
+
+  const copySessionId = async (sessionId) => {
+    try {
+      await navigator.clipboard.writeText(sessionId);
+    } catch (err) {
+      console.error('Failed to copy session ID:', err);
+    }
+  };
+
+  return (
+    <div style={{ padding: '24px 40px' }}>
+      <div style={{ marginBottom: '16px' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#2196F3', cursor: 'pointer', fontSize: '14px' }}>? Back</button>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div>
+          <div style={{ fontSize: '12px', color: '#999', textTransform: 'uppercase', fontWeight: 600 }}>Live Control</div>
+          <h2 style={{ margin: '6px 0 0', fontSize: '20px', color: '#333' }}>{test.title}</h2>
+          {status?.current_session_id && (
+            <div style={{ marginTop: '6px', fontSize: '12px', color: '#777' }}>
+              Session: <span style={{ fontFamily: 'monospace' }}>{status.current_session_id}</span>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={() => onStartNow(test)}
+            disabled={status?.is_active}
+            style={{ padding: '8px 14px', background: status?.is_active ? '#f5f5f5' : '#E8F5E9', color: status?.is_active ? '#999' : '#2E7D32', border: '1px solid #C8E6C9', borderRadius: '6px', cursor: status?.is_active ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+          >
+            Start Now
+          </button>
+          <button
+            onClick={() => onEndNow(test)}
+            disabled={!status?.is_active}
+            style={{ padding: '8px 14px', background: !status?.is_active ? '#f5f5f5' : '#FFEBEE', color: !status?.is_active ? '#999' : '#C62828', border: '1px solid #FFCDD2', borderRadius: '6px', cursor: !status?.is_active ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+          >
+            End Now
+          </button>
+          <button
+            onClick={() => onRestartSession && onRestartSession(test)}
+            style={{ padding: '8px 14px', background: '#FFF3E0', color: '#EF6C00', border: '1px solid #FFE0B2', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+          >
+            Restart Session
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+        <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '14px' }}>
+          <div style={{ fontSize: '12px', color: '#999' }}>Active Students</div>
+          <div style={{ fontSize: '20px', fontWeight: 700, color: '#333' }}>{status?.active_count ?? '--'}</div>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '14px' }}>
+          <div style={{ fontSize: '12px', color: '#999' }}>Total Attempts</div>
+          <div style={{ fontSize: '20px', fontWeight: 700, color: '#333' }}>{status?.total_attempts ?? '--'}</div>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '14px' }}>
+          <div style={{ fontSize: '12px', color: '#999' }}>Submitted</div>
+          <div style={{ fontSize: '20px', fontWeight: 700, color: '#333' }}>{status?.submitted_count ?? '--'}</div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '16px', background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '14px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#333' }}>Session Auto-End</div>
+            <div style={{ fontSize: '12px', color: '#777', marginTop: '4px' }}>
+              Automatically close session at <strong>end date</strong>. Manual restart stays available.
+            </div>
+          </div>
+          <button
+            onClick={handleAutoEndToggle}
+            disabled={autoEndSaving || !status}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              border: `1px solid ${(status?.auto_end_at_end_date !== false) ? '#81C784' : '#e0e0e0'}`,
+              background: (status?.auto_end_at_end_date !== false) ? '#E8F5E9' : '#fafafa',
+              color: (status?.auto_end_at_end_date !== false) ? '#2E7D32' : '#666',
+              cursor: autoEndSaving || !status ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              fontSize: '12px',
+              minWidth: '120px'
+            }}
+          >
+            {autoEndSaving ? 'Saving...' : (status?.auto_end_at_end_date !== false ? 'Auto-End: ON' : 'Auto-End: OFF')}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: '#333' }}>Active Students</div>
+          <button onClick={fetchStatus} style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '6px', padding: '6px 10px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
+        </div>
+        {loading && <div style={{ fontSize: '13px', color: '#999' }}>Loading?</div>}
+        {!loading && error && <div style={{ fontSize: '13px', color: '#C62828' }}>{error}</div>}
+        {!loading && !error && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {(status?.active_students || []).length === 0 && (
+              <div style={{ fontSize: '13px', color: '#999' }}>No active students right now.</div>
+            )}
+            {(status?.active_students || []).map((s) => (
+              <div key={s.student_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid #f0f0f0', borderRadius: '6px', background: '#fafafa' }}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>{s.student_name}</div>
+                  <div style={{ fontSize: '12px', color: '#999' }}>{s.student_email}</div>
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', fontWeight: 600 }}>{formatRemaining(s.remaining_seconds)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '16px', background: '#fff', border: '1px solid #eee', borderRadius: '8px', padding: '16px' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, color: '#333', marginBottom: '8px' }}>Session History</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {status?.current_session_id && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid #d8ebff', background: '#f4f9ff', borderRadius: '6px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#1565c0', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Current Session</div>
+                <div style={{ fontFamily: 'monospace', fontSize: '12px', color: '#333' }}>{status.current_session_id}</div>
+              </div>
+              <button onClick={() => copySessionId(status.current_session_id)} style={{ border: '1px solid #bbdefb', background: '#fff', color: '#1565c0', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer' }}>Copy</button>
+            </div>
+          )}
+          {(status?.session_history || []).length === 0 ? (
+            <div style={{ fontSize: '13px', color: '#999' }}>No previous sessions yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(status.session_history || []).slice().reverse().map((sid, i) => (
+                <div key={`${sid}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #f0f0f0', borderRadius: '6px', padding: '6px 10px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#999' }}>Previous #{i + 1}</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: '12px', color: '#555' }}>{sid}</div>
+                  </div>
+                  <button onClick={() => copySessionId(sid)} style={{ border: '1px solid #ddd', background: '#fff', color: '#666', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer' }}>Copy</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeacherDashboard() {
   const [selectedTestForDetails, setSelectedTestForDetails] = useState(null);
   const [testInfoModal, setTestInfoModal] = useState(null);
@@ -275,6 +696,9 @@ function TeacherDashboard() {
   const [selectedTestTitle, setSelectedTestTitle] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [endConfirmTest, setEndConfirmTest] = useState(null);
+  const [restartConfirmTest, setRestartConfirmTest] = useState(null);
+  const [liveControlTest, setLiveControlTest] = useState(null);
 
   useEffect(() => { fetchTests(); }, []);
 
@@ -298,9 +722,55 @@ function TeacherDashboard() {
     }
   };
 
+  const handleStartNow = async (test, e) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await apiClient.post(`${API_URL}/tests/${test.id}/start-now`);
+      handleTestUpdate(res.data);
+    } catch (error) {
+      console.error('Error starting test:', error);
+      alert('Failed to start test. Please try again.');
+    }
+  };
+
+  const handleEndNow = (test, e) => {
+    if (e) e.stopPropagation();
+    setEndConfirmTest(test);
+  };
+
+  const handleRestartSession = async (test, e) => {
+    if (e) e.stopPropagation();
+    setRestartConfirmTest(test);
+  };
+
   const handleTestUpdate = (updated) => {
     setTests(prev => prev.map(t => t.id === updated.id ? updated : t));
     if (testInfoModal?.id === updated.id) setTestInfoModal(updated);
+    if (liveControlTest?.id === updated.id) setLiveControlTest(updated);
+  };
+
+  const confirmEndNow = async () => {
+    if (!endConfirmTest) return;
+    try {
+      const res = await apiClient.post(`${API_URL}/tests/${endConfirmTest.id}/end-now`);
+      handleTestUpdate(res.data);
+      setEndConfirmTest(null);
+    } catch (error) {
+      console.error('Error ending test:', error);
+      alert('Failed to end test. Please try again.');
+    }
+  };
+
+  const confirmRestartSession = async () => {
+    if (!restartConfirmTest) return;
+    try {
+      const res = await apiClient.post(`${API_URL}/tests/${restartConfirmTest.id}/restart-session`);
+      handleTestUpdate(res.data);
+      setRestartConfirmTest(null);
+    } catch (error) {
+      console.error('Error restarting session:', error);
+      alert('Failed to restart session. Please try again.');
+    }
   };
 
   const filteredTests = tests.filter(test => {
@@ -309,6 +779,35 @@ function TeacherDashboard() {
     const matchesStatus = statusFilter === 'all' || (statusFilter === 'drafts' && !test.is_active);
     return matchesSearch && matchesStatus;
   });
+
+  if (liveControlTest) {
+    return (
+      <>
+      <LiveControlPage
+          test={liveControlTest}
+          onBack={() => setLiveControlTest(null)}
+          onStartNow={handleStartNow}
+          onEndNow={handleEndNow}
+          onRestartSession={handleRestartSession}
+          onTestUpdate={handleTestUpdate}
+        />
+        {endConfirmTest && (
+          <EndTestConfirmModal
+            test={endConfirmTest}
+            onCancel={() => setEndConfirmTest(null)}
+            onConfirm={confirmEndNow}
+          />
+        )}
+        {restartConfirmTest && (
+          <RestartSessionConfirmModal
+            test={restartConfirmTest}
+            onCancel={() => setRestartConfirmTest(null)}
+            onConfirm={confirmRestartSession}
+          />
+        )}
+      </>
+    );
+  }
 
   if (selectedTestForDetails) {
     return (
@@ -416,7 +915,29 @@ function TeacherDashboard() {
                 <span style={{ fontSize: '12px', color: '#bbb' }}>
                   Created {Math.floor((Date.now() - new Date(test.created_at)) / 3600000)}h ago
                 </span>
-                <div style={{ display: 'flex', gap: '8px' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                  {!test.is_active && (
+                    <button
+                      onClick={e => handleStartNow(test, e)}
+                      style={{ padding: '5px 12px', backgroundColor: '#E8F5E9', color: '#2E7D32', border: '1px solid #C8E6C9', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      Start Now
+                    </button>
+                  )}
+                  {test.is_active && (
+                    <button
+                      onClick={e => handleEndNow(test, e)}
+                      style={{ padding: '5px 12px', backgroundColor: '#FFEBEE', color: '#C62828', border: '1px solid #FFCDD2', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      End Now
+                    </button>
+                  )}
+                  <button
+                    onClick={e => handleRestartSession(test, e)}
+                    style={{ padding: '5px 12px', backgroundColor: '#FFF3E0', color: '#EF6C00', border: '1px solid #FFE0B2', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    Restart Session
+                  </button>
                   <button onClick={e => { e.stopPropagation(); setSelectedTestId(test.id); setSelectedTestTitle(test.title); setShowQuestionsModal(true); }}
                     style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#2196F3', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Eye size={12} /> Preview
@@ -424,6 +945,10 @@ function TeacherDashboard() {
                   <button onClick={e => { e.stopPropagation(); setSelectedTest(test); setShowCreateQuestion(true); }}
                     style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#666', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Plus size={12} /> Add Question
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); setLiveControlTest(test); }}
+                    style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#1565c0', border: '1px solid #90CAF9', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
+                    Live Control
                   </button>
                   <button onClick={e => { e.stopPropagation(); setSelectedTestForDetails(test); }}
                     style={{ padding: '5px 12px', backgroundColor: 'transparent', color: '#666', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
@@ -452,6 +977,9 @@ function TeacherDashboard() {
           test={testInfoModal}
           onClose={() => setTestInfoModal(null)}
           onUpdate={handleTestUpdate}
+          onLiveControl={(t) => { setTestInfoModal(null); setLiveControlTest(t); }}
+          onEndNow={(t) => setEndConfirmTest(t)}
+          onRestartSession={handleRestartSession}
         />
       )}
 
@@ -465,6 +993,21 @@ function TeacherDashboard() {
       )}
       <QuestionsModal testId={selectedTestId} testTitle={selectedTestTitle} isOpen={showQuestionsModal}
         onClose={() => { setShowQuestionsModal(false); setSelectedTestId(null); setSelectedTestTitle(''); }} />
+
+      {endConfirmTest && (
+        <EndTestConfirmModal
+          test={endConfirmTest}
+          onCancel={() => setEndConfirmTest(null)}
+          onConfirm={confirmEndNow}
+        />
+      )}
+      {restartConfirmTest && (
+        <RestartSessionConfirmModal
+          test={restartConfirmTest}
+          onCancel={() => setRestartConfirmTest(null)}
+          onConfirm={confirmRestartSession}
+        />
+      )}
     </div>
   );
 }
@@ -474,7 +1017,8 @@ function CreateTestModal({ onClose, onSuccess }) {
   const [formData, setFormData] = useState({
     title: '', description: '', duration_minutes: 60, is_active: true,
     test_type: 'invite_only', start_date: '', end_date: '', tags: '',
-    anti_paste_enabled: true, tab_switch_enabled: true, tab_switch_limit: 3
+    anti_paste_enabled: true, tab_switch_enabled: true, tab_switch_limit: 3,
+    auto_end_at_end_date: true
   });
   const [allowedLangs, setAllowedLangs] = useState(['python', 'c', 'cpp', 'java']);
 
@@ -571,6 +1115,16 @@ function CreateTestModal({ onClose, onSuccess }) {
                 style={{ ...inp, backgroundColor: formData.tab_switch_enabled ? '#fff' : '#f5f5f5' }}
               />
             </div>
+          </div>
+          <div style={{ marginBottom: '14px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={formData.auto_end_at_end_date}
+                onChange={e => setFormData({ ...formData, auto_end_at_end_date: e.target.checked })}
+              />
+              Auto-end test at end date
+            </label>
           </div>
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>Allowed Languages</label>
