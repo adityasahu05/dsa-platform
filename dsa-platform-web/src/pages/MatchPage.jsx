@@ -3,6 +3,193 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import TestAttempt from "../components/TestAttempt";
 import api from "../services/api";
 
+const INSTRUCTION_SECONDS = 60;
+
+function formatCountdown(sec) {
+  const total = Math.max(0, Number(sec) || 0);
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function TestInstructionsGate({ test, onBegin, onBack }) {
+  const [secondsLeft, setSecondsLeft] = useState(INSTRUCTION_SECONDS);
+  const [startedAtMs, setStartedAtMs] = useState(null);
+  const [agree, setAgree] = useState(false);
+
+  const storageKey = test?.id ? `pretest_instruction_${test.id}` : null;
+
+  useEffect(() => {
+    if (!test?.id || !storageKey) return;
+    const storedRaw = sessionStorage.getItem(storageKey);
+    const stored = storedRaw ? Number(storedRaw) : NaN;
+    const now = Date.now();
+    const startMs = Number.isFinite(stored) ? stored : now;
+    setStartedAtMs(startMs);
+    if (!Number.isFinite(stored)) sessionStorage.setItem(storageKey, String(startMs));
+  }, [test?.id, storageKey]);
+
+  useEffect(() => {
+    if (!startedAtMs) return;
+    const update = () => {
+      const elapsedSec = Math.floor((Date.now() - startedAtMs) / 1000);
+      const remaining = Math.max(0, INSTRUCTION_SECONDS - elapsedSec);
+      setSecondsLeft(remaining);
+      if (remaining <= 0) {
+        if (storageKey) sessionStorage.removeItem(storageKey);
+        onBegin();
+      }
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [startedAtMs, onBegin, storageKey]);
+
+  return (
+    <div className="match-landing">
+      <style>{`
+        .intro-card {
+          width: 100%;
+          max-width: 760px;
+          background: rgba(15,23,42,0.96);
+          border: 1px solid rgba(148,163,184,0.2);
+          border-radius: 20px;
+          padding: 24px;
+          box-shadow: 0 24px 60px rgba(15,23,42,0.5);
+          color: #e2e8f0;
+        }
+        .intro-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          align-items: flex-start;
+          margin-bottom: 14px;
+        }
+        .intro-timer {
+          min-width: 92px;
+          text-align: center;
+          background: rgba(37,99,235,0.14);
+          border: 1px solid rgba(96,165,250,0.45);
+          border-radius: 12px;
+          padding: 8px 10px;
+        }
+        .intro-list {
+          margin: 0;
+          margin-top: 10px;
+          padding-left: 18px;
+          color: rgba(226,232,240,0.88);
+          font-size: 13px;
+          line-height: 1.65;
+        }
+        .intro-meta {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+          margin: 14px 0;
+        }
+        .intro-box {
+          border: 1px solid rgba(148,163,184,0.22);
+          border-radius: 10px;
+          padding: 10px 12px;
+          background: rgba(30,41,59,0.7);
+        }
+        .intro-actions {
+          display: flex;
+          gap: 10px;
+          margin-top: 16px;
+          flex-wrap: wrap;
+        }
+        .intro-btn {
+          border: none;
+          border-radius: 10px;
+          padding: 10px 14px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        @media (max-width: 760px) {
+          .intro-meta { grid-template-columns: 1fr; }
+          .intro-head { flex-direction: column; }
+          .intro-timer { width: 100%; }
+        }
+      `}</style>
+
+      <div className="intro-card">
+        <div className="intro-head">
+          <div>
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.4px", color: "rgba(148,163,184,0.95)" }}>
+              Pre-Test Instructions
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2 }}>{test.title}</div>
+            <div style={{ marginTop: 4, color: "rgba(148,163,184,0.95)", fontSize: 13 }}>
+              Read instructions carefully. Test starts automatically after countdown.
+            </div>
+          </div>
+          <div className="intro-timer">
+            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.4px", color: "#93c5fd" }}>Starts In</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#dbeafe", lineHeight: 1.1 }}>{formatCountdown(secondsLeft)}</div>
+          </div>
+        </div>
+
+        <div className="intro-meta">
+          <div className="intro-box">
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>Duration</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{test.duration_minutes || 60} min</div>
+          </div>
+          <div className="intro-box">
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>Languages</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>
+              {(test.allowed_languages || []).map((l) => (l === "cpp" ? "C++" : l.toUpperCase())).join(", ") || "Python"}
+            </div>
+          </div>
+          <div className="intro-box">
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>Mode</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{test.test_type === "public" ? "Public" : "Invite Only"}</div>
+          </div>
+        </div>
+
+        <div style={{ border: "1px solid rgba(148,163,184,0.22)", borderRadius: 10, padding: "12px 14px", background: "rgba(15,23,42,0.55)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Important Rules</div>
+          <ul className="intro-list">
+            <li>Do not switch tabs/windows during the test.</li>
+            <li>Copy/paste can be restricted based on teacher settings.</li>
+            <li>Each question can be submitted only once.</li>
+            <li>Timer starts when the test opens and cannot be paused.</li>
+            <li>Stable internet connection is strongly recommended.</li>
+          </ul>
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 13, color: "rgba(226,232,240,0.95)" }}>
+          <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
+          I have read and understood the instructions.
+        </label>
+
+        <div className="intro-actions">
+          <button className="intro-btn" onClick={onBack} style={{ background: "transparent", color: "#cbd5e1", border: "1px solid rgba(148,163,184,0.35)" }}>
+            Back
+          </button>
+          <button
+            className="intro-btn"
+            onClick={() => {
+              if (storageKey) sessionStorage.removeItem(storageKey);
+              onBegin();
+            }}
+            disabled={!agree}
+            style={{
+              background: !agree ? "rgba(37,99,235,0.45)" : "linear-gradient(120deg, #2563eb, #1d4ed8)",
+              color: "#fff",
+              opacity: !agree ? 0.6 : 1,
+              cursor: !agree ? "not-allowed" : "pointer",
+            }}
+          >
+            Start Now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MatchPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -18,6 +205,7 @@ export default function MatchPage() {
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState("");
   const [manualCode, setManualCode] = useState("");
+  const [canBegin, setCanBegin] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -65,12 +253,34 @@ export default function MatchPage() {
     }
   };
 
-  if (testFromState) {
-    return <TestAttempt test={testFromState} onBack={() => navigate("/")} />;
-  }
+  const resolvedTest = testFromState || linkedTest;
+  useEffect(() => {
+    if (!resolvedTest?.id) {
+      setCanBegin(false);
+      return;
+    }
+    const startedKey = `pretest_started_${resolvedTest.id}`;
+    setCanBegin(sessionStorage.getItem(startedKey) === "1");
+  }, [resolvedTest?.id]);
 
-  if (linkedTest) {
-    return <TestAttempt test={linkedTest} onBack={() => navigate("/")} />;
+  if (resolvedTest && canBegin) {
+    return <TestAttempt test={resolvedTest} onBack={() => navigate("/")} />;
+  }
+  if (resolvedTest && !canBegin) {
+    return (
+      <TestInstructionsGate
+        test={resolvedTest}
+        onBegin={() => {
+          sessionStorage.setItem(`pretest_started_${resolvedTest.id}`, "1");
+          setCanBegin(true);
+        }}
+        onBack={() => {
+          sessionStorage.removeItem(`pretest_instruction_${resolvedTest.id}`);
+          sessionStorage.removeItem(`pretest_started_${resolvedTest.id}`);
+          navigate("/");
+        }}
+      />
+    );
   }
 
   return (
