@@ -2,8 +2,9 @@ import { useState } from 'react';
 import axios from 'axios';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { API_BASE } from '../config';
 
-const API_URL = '/api/auth';
+const API_URL = API_BASE ? `${API_BASE}/api/auth` : '/api/auth';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDeR0IoojnXn_JoFjSteB8o_1YBg7mCc3Y',
