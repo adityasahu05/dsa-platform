@@ -46,8 +46,22 @@ function TestInstructionsGate({ test, onBegin, onBack }) {
   }, [startedAtMs, onBegin, storageKey]);
 
   return (
-    <div className="match-landing">
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        background: "radial-gradient(circle at top, rgba(37,99,235,0.15), transparent 55%), #0b0f19",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        boxSizing: "border-box",
+        overflowY: "auto",
+        fontFamily: "\"Sora\", \"Segoe UI\", sans-serif",
+      }}
+    >
       <style>{`
+        @import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap");
         .intro-card {
           width: 100%;
           max-width: 760px;
@@ -111,6 +125,9 @@ function TestInstructionsGate({ test, onBegin, onBack }) {
           .intro-meta { grid-template-columns: 1fr; }
           .intro-head { flex-direction: column; }
           .intro-timer { width: 100%; }
+          .intro-card {
+            margin: auto 0;
+          }
         }
       `}</style>
 
