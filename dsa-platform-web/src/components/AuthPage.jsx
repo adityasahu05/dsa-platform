@@ -18,12 +18,12 @@ const googleProvider = new GoogleAuthProvider();
 
 const theme = {
   pageBgA: '#f3e9ec',
-  pageBgB: '#dde9ff',
+  pageBgB: '#ffe8ef',
   shellBg: '#f8fafc',
-  shellBorder: '#b8d7ff',
+  shellBorder: '#f3bac6',
   formSurface: '#ffffff',
-  panelBlue: '#cfe6ff',
-  panelBlueSoft: '#deefff',
+  panelBlue: '#ffe4eb',
+  panelBlueSoft: '#fff1f4',
   textStrong: '#1e293b',
   textMuted: '#64748b',
   border: '#dbe3ef',
@@ -132,8 +132,8 @@ const injectFontAndStyles = () => {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-      box-shadow: 0 14px 30px rgba(37, 99, 235, 0.3);
+      background: linear-gradient(145deg, #111827, #000000);
+      box-shadow: 0 14px 30px rgba(15, 23, 42, 0.34);
     }
 
     .auth-title {
@@ -310,10 +310,11 @@ const injectFontAndStyles = () => {
     .panel-title {
       text-align: center;
       color: ${theme.textStrong};
-      font-size: 36px;
+      font-size: 30px;
       font-weight: 800;
       margin: 0 0 10px;
       letter-spacing: -0.02em;
+      white-space: nowrap;
     }
 
     .panel-title span { color: #ef4444; }
@@ -350,8 +351,8 @@ const injectFontAndStyles = () => {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(130deg, #2563eb, #1d4ed8);
-      box-shadow: 0 20px 40px rgba(37,99,235,0.26);
+      background: linear-gradient(145deg, #111827, #000000);
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.34);
       border: 4px solid #e7f2ff;
     }
 
@@ -451,6 +452,7 @@ const injectFontAndStyles = () => {
         padding: 18px;
       }
       .panel-title { font-size: 30px; }
+      .panel-title { white-space: normal; }
       .auth-title { font-size: 28px; }
       .orbit-wrap {
         max-width: 330px;
