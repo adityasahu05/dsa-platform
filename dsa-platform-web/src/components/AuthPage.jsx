@@ -3,7 +3,7 @@ import axios from 'axios';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 
-const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/auth';
+const API_URL = '/api/auth';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDeR0IoojnXn_JoFjSteB8o_1YBg7mCc3Y',
@@ -435,7 +435,7 @@ const injectFontAndStyles = () => {
       margin-bottom: 14px;
     }
 
-    @media (max-width: 1120px) {
+    @media (max-width: 960px) {
       .auth-content {
         grid-template-columns: 1fr;
       }
