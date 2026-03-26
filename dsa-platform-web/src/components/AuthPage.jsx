@@ -2,8 +2,6 @@ import { useState } from 'react';
 import axios from 'axios';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import Lottie from 'lottie-react';
-import developerCodingAnimation from '../assets/animations/developer_coding_loop.json';
 
 const API_URL = 'https://dsa-platform-production-64f6.up.railway.app/api/auth';
 
@@ -131,6 +129,97 @@ function GoogleIcon() {
   );
 }
 
+function DeveloperLoopIllustration() {
+  return (
+    <div style={{ width: '100%', maxWidth: '460px' }}>
+      <style>{`
+        .dev-loop-wrap { display: flex; justify-content: center; }
+        .dev-loop { width: 100%; max-width: 420px; height: 260px; position: relative; }
+        .dev-char {
+          position: absolute; left: 50%; top: 50%;
+          width: 250px; height: 180px; transform: translate(-50%, -50%);
+          animation: dev-breathe 7s ease-in-out infinite;
+        }
+        .dev-head {
+          position: absolute; left: 93px; top: 6px; width: 64px; height: 64px;
+          background: #fff; border: 3px solid #2D3436; border-radius: 50%;
+          animation: dev-head-tilt 7s ease-in-out infinite;
+          transform-origin: 50% 100%;
+        }
+        .dev-eye {
+          position: absolute; top: 23px; width: 6px; height: 6px; background: #2D3436; border-radius: 50%;
+          animation: dev-blink 7s linear infinite;
+        }
+        .dev-eye.left { left: 19px; }
+        .dev-eye.right { right: 19px; }
+        .dev-smile {
+          position: absolute; left: 20px; right: 20px; bottom: 15px; height: 8px;
+          border-bottom: 3px solid #2D3436; border-radius: 0 0 20px 20px;
+        }
+        .dev-body {
+          position: absolute; left: 62px; top: 64px; width: 126px; height: 86px;
+          background: #6C5CE7; border-radius: 26px;
+        }
+        .dev-hand {
+          position: absolute; top: 114px; width: 50px; height: 14px; border-radius: 8px; background: #fff;
+          animation: dev-type 1.2s ease-in-out infinite;
+        }
+        .dev-hand.left { left: 48px; animation-delay: 0s; }
+        .dev-hand.right { right: 46px; animation-delay: .35s; }
+        .dev-laptop-glow {
+          position: absolute; left: 124px; top: 104px; width: 132px; height: 54px;
+          background: rgba(108, 92, 231, .2); border-radius: 30px;
+          filter: blur(8px); animation: dev-glow 2.8s ease-in-out infinite;
+        }
+        .dev-laptop-screen {
+          position: absolute; left: 112px; top: 93px; width: 156px; height: 90px;
+          background: #fff; border: 4px solid #2D3436; border-radius: 12px;
+        }
+        .dev-laptop-base {
+          position: absolute; left: 91px; top: 170px; width: 198px; height: 24px; background: #2D3436; border-radius: 12px;
+        }
+        @keyframes dev-type {
+          0%, 100% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-5px) rotate(-2deg); }
+        }
+        @keyframes dev-blink {
+          0%, 43%, 46%, 85%, 88%, 100% { transform: scaleY(1); opacity: 1; }
+          44%, 86% { transform: scaleY(.1); opacity: .65; }
+        }
+        @keyframes dev-glow {
+          0%, 100% { opacity: .42; transform: scale(1); }
+          50% { opacity: .78; transform: scale(1.04); }
+        }
+        @keyframes dev-breathe {
+          0%, 100% { transform: translate(-50%, -50%); }
+          50% { transform: translate(-50%, calc(-50% - 3px)); }
+        }
+        @keyframes dev-head-tilt {
+          0%, 100% { transform: rotate(0deg); }
+          50% { transform: rotate(1.4deg); }
+        }
+      `}</style>
+      <div className="dev-loop-wrap">
+        <div className="dev-loop">
+          <div className="dev-char">
+            <div className="dev-head">
+              <span className="dev-eye left" />
+              <span className="dev-eye right" />
+              <span className="dev-smile" />
+            </div>
+            <div className="dev-body" />
+            <div className="dev-laptop-glow" />
+            <div className="dev-laptop-screen" />
+            <div className="dev-laptop-base" />
+            <div className="dev-hand left" />
+            <div className="dev-hand right" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main AuthPage ─────────────────────────────────────────────────────────────
 function AuthPage({ onLogin }) {
   injectFontAndStyles();
@@ -239,14 +328,7 @@ function AuthPage({ onLogin }) {
           }}>
             Practice and test your skills with a clean coding workflow designed for students and instructors.
           </div>
-          <div style={{ width: '100%', maxWidth: '460px' }}>
-            <Lottie
-              animationData={developerCodingAnimation}
-              loop
-              autoplay
-              style={{ width: '100%', height: '360px' }}
-            />
-          </div>
+          <DeveloperLoopIllustration />
         </div>
         <div className="auth-right">
         {/* Brand */}
