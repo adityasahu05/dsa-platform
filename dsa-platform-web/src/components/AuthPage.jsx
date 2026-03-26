@@ -67,38 +67,14 @@ const injectFontAndStyles = () => {
       padding: 18px;
     }
 
-    .auth-brandbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 16px;
-      padding: 0 6px;
-    }
-
-    .auth-brandleft {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: ${theme.dark};
+    .auth-topline {
+      text-align: center;
+      margin: 4px 0 14px;
+      font-size: 13px;
       font-weight: 700;
-      font-size: 18px;
+      color: #334155;
+      letter-spacing: 0.02em;
     }
-
-    .lang-mini {
-      width: 34px;
-      height: 34px;
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      font-weight: 800;
-      color: #fff;
-      border: 2px solid #fff;
-      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
-      margin-left: -8px;
-    }
-    .lang-mini:first-child { margin-left: 0; }
 
     .auth-content {
       display: grid;
@@ -158,11 +134,6 @@ const injectFontAndStyles = () => {
       justify-content: center;
       background: linear-gradient(135deg, #3b82f6, #1d4ed8);
       box-shadow: 0 14px 30px rgba(37, 99, 235, 0.3);
-      color: white;
-      font-size: 11px;
-      font-weight: 800;
-      gap: 3px;
-      letter-spacing: 0.01em;
     }
 
     .auth-title {
@@ -380,12 +351,47 @@ const injectFontAndStyles = () => {
       align-items: center;
       justify-content: center;
       background: linear-gradient(130deg, #2563eb, #1d4ed8);
-      color: #fff;
-      font-weight: 900;
       box-shadow: 0 20px 40px rgba(37,99,235,0.26);
       border: 4px solid #e7f2ff;
-      font-size: 18px;
-      letter-spacing: 0.02em;
+    }
+
+    .slash-logo {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10%;
+      transform: scale(0.9);
+    }
+
+    .slash-logo .mid {
+      width: 20%;
+      height: 62%;
+      border-radius: 5px;
+      background: linear-gradient(180deg, #fb7185, #dc2626);
+      transform: skewX(-18deg);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.62);
+    }
+
+    .slash-logo .side {
+      width: 19%;
+      height: 24%;
+      border-radius: 5px;
+      background: linear-gradient(180deg, #ef4444, #b91c1c);
+    }
+
+    .slash-logo.small {
+      width: 36px;
+      height: 36px;
+      transform: scale(0.85);
+    }
+
+    .slash-logo.large {
+      width: 54px;
+      height: 54px;
+      transform: scale(1);
     }
 
     .orbit-badge {
@@ -456,7 +462,6 @@ const injectFontAndStyles = () => {
       .core {
         width: 74px;
         height: 74px;
-        font-size: 15px;
       }
       .orbit-badge {
         width: 44px;
@@ -496,13 +501,12 @@ function GoogleIcon() {
   );
 }
 
-function SlashCoderLangMark() {
+function SlashCoderLogo({ size = 'small' }) {
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-      <span className="lang-mini" style={{ background: '#3776ab' }}>PY</span>
-      <span className="lang-mini" style={{ background: '#5c6bc0' }}>C</span>
-      <span className="lang-mini" style={{ background: '#3b82f6' }}>C++</span>
-      <span className="lang-mini" style={{ background: '#f97316' }}>J</span>
+    <div className={`slash-logo ${size}`}>
+      <span className="side" />
+      <span className="mid" />
+      <span className="side" />
     </div>
   );
 }
@@ -510,12 +514,14 @@ function SlashCoderLangMark() {
 function OrbitLanguagePanel() {
   return (
     <>
-      <h2 className="panel-title">Code Better <span>Everywhere</span></h2>
+      <h2 className="panel-title">CODE • <span>COMPETE</span> • CONQUER</h2>
       <div className="orbit-wrap">
         <div className="orbit o3" />
         <div className="orbit o2" />
         <div className="orbit o1" />
-        <div className="core">/&lt;&gt;</div>
+        <div className="core">
+          <SlashCoderLogo size="large" />
+        </div>
 
         <div className="orbit-badge b-py">PY</div>
         <div className="orbit-badge b-c">C</div>
@@ -524,7 +530,7 @@ function OrbitLanguagePanel() {
         <div className="orbit-badge b-js">JS</div>
       </div>
       <p className="panel-note">
-        Practice, compete, and level up with SlashCoder style assessments built for real coding performance.
+        Practice. Compete. Get Hired.
       </p>
     </>
   );
@@ -588,26 +594,17 @@ function AuthPage({ onLogin }) {
   return (
     <div className="auth-root">
       <div className="auth-shell">
-        <div className="auth-brandbar">
-          <div className="auth-brandleft">
-            <SlashCoderLangMark />
-            <span>SlashCoder</span>
-          </div>
-        </div>
-
+        <div className="auth-topline">SlashCoder — Skill First. Always.</div>
         <div className="auth-content">
           <div className="auth-left">
             <div className="auth-form-wrap">
               <div className="auth-small-grid" />
 
               <div className="auth-icon-badge">
-                <span>PY</span>
-                <span>C</span>
-                <span>C++</span>
-                <span>J</span>
+                <SlashCoderLogo size="small" />
               </div>
 
-              <h1 className="auth-title">{mode === 'login' ? 'Login to your account!' : 'Create your account!'}</h1>
+              <h1 className="auth-title">{mode === 'login' ? 'Welcome Back, Coder ⚡' : 'Welcome Back, Coder ⚡'}</h1>
               <p className="auth-subtitle">
                 {mode === 'login'
                   ? 'Enter your registered email address and password to login.'
@@ -624,7 +621,7 @@ function AuthPage({ onLogin }) {
                       setError('');
                     }}
                   >
-                    {m === 'login' ? 'Sign In' : 'Register'}
+                    {m === 'login' ? 'Login' : 'Create Account'}
                   </button>
                 ))}
               </div>
@@ -651,7 +648,7 @@ function AuthPage({ onLogin }) {
                     type="email"
                     value={formData.email}
                     onChange={update('email')}
-                    placeholder="you@example.com"
+                    placeholder="Enter your email"
                     required
                   />
                 </FormField>
@@ -662,7 +659,7 @@ function AuthPage({ onLogin }) {
                     type="password"
                     value={formData.password}
                     onChange={update('password')}
-                    placeholder="********"
+                    placeholder="Enter your password"
                     required
                     minLength={6}
                   />
@@ -677,13 +674,13 @@ function AuthPage({ onLogin }) {
                         onChange={(e) => setRememberMe(e.target.checked)}
                         style={{ accentColor: '#ef4444', width: '14px', height: '14px' }}
                       />
-                      Remember me
+                      Keep me signed in
                     </label>
                     <button
                       type="button"
                       style={{ background: 'none', border: 'none', color: '#2563eb', fontWeight: 600, fontSize: '12px', cursor: 'pointer', padding: 0 }}
                     >
-                      Forgot Password?
+                      Forgot your password?
                     </button>
                   </div>
                 )}
@@ -694,14 +691,14 @@ function AuthPage({ onLogin }) {
                       ? 'Signing in...'
                       : 'Creating account...'
                     : mode === 'login'
-                      ? 'Login'
+                      ? 'Start Coding 🚀'
                       : 'Create Account'}
                 </button>
               </form>
 
               <div className="auth-divider">
                 <div className="auth-divider-line" />
-                <span className="auth-divider-text">or login with</span>
+                <span className="auth-divider-text">or continue with</span>
                 <div className="auth-divider-line" />
               </div>
 
