@@ -6,6 +6,9 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Eye, Edit2, Trash2, Users, Clock, CheckCircle, XCircle, X } from 'lucide-react';
 import { apiClient } from '../services/api';
 
+
+const isIST = Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Kolkata';
+
 const API_URL = '/api/teacher';
 
 function TestDetailsPage({ test, onBack, onAddQuestion }) {
@@ -87,7 +90,10 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleString('en-IN');
+    const locale = isIST ? 'en-IN' : undefined;
+    const timeZone = isIST ? 'Asia/Kolkata' : undefined;
+    const formatted = d.toLocaleString(locale, { timeZone, hour12: true });
+    return isIST ? `${formatted} IST` : formatted;
   };
 
   const formatDuration = (seconds) => {
@@ -505,7 +511,7 @@ function TestDetailsPage({ test, onBack, onAddQuestion }) {
                             {formatDuration(overallSeconds)}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#999' }}>
-                            {new Date(submission.submitted_at).toLocaleString('en-IN')}
+                            {formatDateTime(submission.submitted_at)}
                           </td>
                         </tr>
                       )})}
